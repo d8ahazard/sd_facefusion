@@ -206,6 +206,11 @@ class AgeModifier(BaseProcessor):
         extend_vision_frame, extend_affine_matrix = warp_face_by_face_landmark_5(temp_vision_frame,
                                                                                  extend_face_landmark_5,
                                                                                  model_template, model_size)
+        # Safety: ensure tensors match model's expected spatial sizes
+        if extend_vision_frame.shape[:2][::-1] != model_size:
+            extend_vision_frame = cv2.resize(extend_vision_frame, model_size, interpolation=cv2.INTER_AREA)
+        if crop_vision_frame.shape[:2][::-1] != crop_size:
+            crop_vision_frame = cv2.resize(crop_vision_frame, crop_size, interpolation=cv2.INTER_AREA)
         extend_vision_frame_raw = extend_vision_frame.copy()
         box_mask = masker.create_static_box_mask(model_size, state_manager.get_item('face_mask_blur'), (0, 0, 0, 0))
         crop_masks = [box_mask]
@@ -222,7 +227,7 @@ class AgeModifier(BaseProcessor):
         extend_vision_frame = normalize_extend_frame(extend_vision_frame)
         extend_vision_frame = fix_color(extend_vision_frame_raw, extend_vision_frame)
         extend_crop_mask = cv2.pyrUp(numpy.minimum.reduce(crop_masks).clip(0, 1))
-        extend_affine_matrix *= extend_vision_frame.shape[0] / 512
+        extend_affine_matrix *= extend_vision_frame.shape[0] / model_size[0]
         paste_vision_frame = paste_back(temp_vision_frame, extend_vision_frame, extend_crop_mask, extend_affine_matrix)
         return paste_vision_frame
 

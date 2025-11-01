@@ -306,48 +306,48 @@ def process_image(start_time: float, is_batch: bool = False, reference_faces=Non
     create_temp_directory(state_manager.get_item('target_path'))
     # copy image
     process_manager.start()
-    temp_image_resolution = pack_resolution(restrict_image_resolution(state_manager.get_item('target_path'),
-                                                                      unpack_resolution(state_manager.get_item(
-                                                                          'output_image_resolution'))))
-    logger.info(wording.get('copying_image').format(resolution=temp_image_resolution), __name__)
-    if copy_image(state_manager.get_item('target_path'), temp_image_resolution):
-        logger.debug(wording.get('copying_image_succeed'), __name__)
-    else:
-        logger.error(wording.get('copying_image_failed'), __name__)
+    try:
+        temp_image_resolution = pack_resolution(restrict_image_resolution(state_manager.get_item('target_path'),
+                                                                          unpack_resolution(state_manager.get_item(
+                                                                              'output_image_resolution'))))
+        logger.info(wording.get('copying_image').format(resolution=temp_image_resolution), __name__)
+        if copy_image(state_manager.get_item('target_path'), temp_image_resolution):
+            logger.debug(wording.get('copying_image_succeed'), __name__)
+        else:
+            logger.error(wording.get('copying_image_failed'), __name__)
+            return 1
+        # process image
+        temp_file_path = get_temp_file_path(state_manager.get_item('target_path'))
+        for processor_module in get_processors_modules(state_manager.get_item('processors')):
+            logger.info(wording.get('processing'), processor_module.display_name)
+            processor_module.process_image(temp_file_path, temp_file_path, reference_faces)
+            if not is_batch:
+                processor_module.post_process()
+        if is_process_stopping():
+            return 4
+        # finalize image
+        logger.info(wording.get('finalizing_image').format(resolution=state_manager.get_item('output_image_resolution')),
+                    __name__)
+        if finalize_image(state_manager.get_item('target_path'), state_manager.get_item('output_path'),
+                          state_manager.get_item('output_image_resolution')):
+            logger.debug(wording.get('finalizing_image_succeed'), __name__)
+        else:
+            logger.warn(wording.get('finalizing_image_skipped'), __name__)
+        # clear temp
+        logger.debug(wording.get('clearing_temp'), __name__)
+        clear_temp_directory(state_manager.get_item('target_path'))
+        # validate image
+        if is_image(state_manager.get_item('output_path')):
+            seconds = '{:.2f}'.format((time() - start_time) % 60)
+            logger.info(wording.get('processing_image_succeed').format(seconds=seconds), __name__)
+            conditional_log_statistics()
+        else:
+            logger.error(wording.get('processing_image_failed'), __name__)
+            return 1
+        return 0
+    finally:
+        # Always ensure process_manager is properly reset
         process_manager.end()
-        return 1
-    # process image
-    temp_file_path = get_temp_file_path(state_manager.get_item('target_path'))
-    for processor_module in get_processors_modules(state_manager.get_item('processors')):
-        logger.info(wording.get('processing'), processor_module.display_name)
-        processor_module.process_image(temp_file_path, temp_file_path, reference_faces)
-        if not is_batch:
-            processor_module.post_process()
-    if is_process_stopping():
-        process_manager.end()
-        return 4
-    # finalize image
-    logger.info(wording.get('finalizing_image').format(resolution=state_manager.get_item('output_image_resolution')),
-                __name__)
-    if finalize_image(state_manager.get_item('target_path'), state_manager.get_item('output_path'),
-                      state_manager.get_item('output_image_resolution')):
-        logger.debug(wording.get('finalizing_image_succeed'), __name__)
-    else:
-        logger.warn(wording.get('finalizing_image_skipped'), __name__)
-    # clear temp
-    logger.debug(wording.get('clearing_temp'), __name__)
-    clear_temp_directory(state_manager.get_item('target_path'))
-    # validate image
-    if is_image(state_manager.get_item('output_path')):
-        seconds = '{:.2f}'.format((time() - start_time) % 60)
-        logger.info(wording.get('processing_image_succeed').format(seconds=seconds), __name__)
-        conditional_log_statistics()
-    else:
-        logger.error(wording.get('processing_image_failed'), __name__)
-        process_manager.end()
-        return 1
-    process_manager.end()
-    return 0
 
 
 def process_video(start_time: float) -> ErrorCode:
@@ -364,97 +364,93 @@ def process_video(start_time: float) -> ErrorCode:
     # extract frames
     print(f"Starting process manager")
     process_manager.start()
-    temp_video_resolution = pack_resolution(restrict_video_resolution(state_manager.get_item('target_path'),
-                                                                      unpack_resolution(state_manager.get_item(
-                                                                          'output_video_resolution'))))
-    temp_video_fps = restrict_video_fps(state_manager.get_item('target_path'),
-                                        state_manager.get_item('output_video_fps'))
-    logger.info(wording.get('extracting_frames').format(resolution=temp_video_resolution, fps=temp_video_fps), __name__)
-    if extract_frames(state_manager.get_item('target_path'), temp_video_resolution, temp_video_fps):
-        logger.debug(wording.get('extracting_frames_succeed'), __name__)
-    else:
-        if is_process_stopping():
-            process_manager.end()
-            return 4
-        logger.error(wording.get('extracting_frames_failed'), __name__)
-        process_manager.end()
-        return 1
-    # process frames
-    temp_frame_paths = get_temp_frame_paths(state_manager.get_item('target_path'))
-    if temp_frame_paths:
-        for processor_module in get_processors_modules(state_manager.get_item('processors')):
-            print(f"Processing {processor_module.display_name}")
-            logger.info(wording.get('processing'), processor_module.display_name)
-            processor_module.process_video(temp_frame_paths)
-            print(f"Post processing {processor_module.display_name}")
-            processor_module.post_process()
-            print(f"Post processing {processor_module.display_name} done in {time() - start_time} seconds")
-        if is_process_stopping():
-            return 4
-    else:
-        logger.error(wording.get('temp_frames_not_found'), __name__)
-        process_manager.end()
-        return 1
-    # merge video
-    logger.info(wording.get('merging_video').format(resolution=state_manager.get_item('output_video_resolution'),
-                                                    fps=state_manager.get_item('output_video_fps')), __name__)
-    print(f"Merging video")
-    if merge_video(state_manager.get_item('target_path'), state_manager.get_item('output_video_resolution'),
-                   state_manager.get_item('output_video_fps')):
-        logger.debug(wording.get('merging_video_succeed'), __name__)
-        print(f"Merging video succeed")
-    else:
-        if is_process_stopping():
-            process_manager.end()
-            return 4
-        logger.error(wording.get('merging_video_failed'), __name__)
-        print(f"Merging video failed")
-        process_manager.end()
-        return 1
-    # handle audio
-    if state_manager.get_item('skip_audio'):
-        logger.info(wording.get('skipping_audio'), __name__)
-        move_temp_file(state_manager.get_item('target_path'), state_manager.get_item('output_path'))
-    else:
-        source_audio_path = get_first(filter_audio_paths(state_manager.get_item('source_paths')))
-        if source_audio_path:
-            print(f"Replacing audio")
-            if replace_audio(state_manager.get_item('target_path'), source_audio_path,
-                             state_manager.get_item('output_path')):
-                logger.debug(wording.get('replacing_audio_succeed'), __name__)
-            else:
-                if is_process_stopping():
-                    process_manager.end()
-                    return 4
-                logger.warn(wording.get('replacing_audio_skipped'), __name__)
-                move_temp_file(state_manager.get_item('target_path'), state_manager.get_item('output_path'))
+    try:
+        temp_video_resolution = pack_resolution(restrict_video_resolution(state_manager.get_item('target_path'),
+                                                                          unpack_resolution(state_manager.get_item(
+                                                                              'output_video_resolution'))))
+        temp_video_fps = restrict_video_fps(state_manager.get_item('target_path'),
+                                            state_manager.get_item('output_video_fps'))
+        logger.info(wording.get('extracting_frames').format(resolution=temp_video_resolution, fps=temp_video_fps), __name__)
+        if extract_frames(state_manager.get_item('target_path'), temp_video_resolution, temp_video_fps):
+            logger.debug(wording.get('extracting_frames_succeed'), __name__)
         else:
-            print(f"Restoring audio")
-            if restore_audio(state_manager.get_item('target_path'), state_manager.get_item('output_path'),
-                             state_manager.get_item('output_video_fps')):
-                logger.debug(wording.get('restoring_audio_succeed'), __name__)
-                print(f"Restoring audio succeed")
+            if is_process_stopping():
+                return 4
+            logger.error(wording.get('extracting_frames_failed'), __name__)
+            return 1
+        # process frames
+        temp_frame_paths = get_temp_frame_paths(state_manager.get_item('target_path'))
+        if temp_frame_paths:
+            for processor_module in get_processors_modules(state_manager.get_item('processors')):
+                print(f"Processing {processor_module.display_name}")
+                logger.info(wording.get('processing'), processor_module.display_name)
+                processor_module.process_video(temp_frame_paths)
+                print(f"Post processing {processor_module.display_name}")
+                processor_module.post_process()
+                print(f"Post processing {processor_module.display_name} done in {time() - start_time} seconds")
+            if is_process_stopping():
+                return 4
+        else:
+            logger.error(wording.get('temp_frames_not_found'), __name__)
+            return 1
+        # merge video
+        logger.info(wording.get('merging_video').format(resolution=state_manager.get_item('output_video_resolution'),
+                                                        fps=state_manager.get_item('output_video_fps')), __name__)
+        print(f"Merging video")
+        if merge_video(state_manager.get_item('target_path'), state_manager.get_item('output_video_resolution'),
+                       state_manager.get_item('output_video_fps')):
+            logger.debug(wording.get('merging_video_succeed'), __name__)
+            print(f"Merging video succeed")
+        else:
+            if is_process_stopping():
+                return 4
+            logger.error(wording.get('merging_video_failed'), __name__)
+            print(f"Merging video failed")
+            return 1
+        # handle audio
+        if state_manager.get_item('skip_audio'):
+            logger.info(wording.get('skipping_audio'), __name__)
+            move_temp_file(state_manager.get_item('target_path'), state_manager.get_item('output_path'))
+        else:
+            source_audio_path = get_first(filter_audio_paths(state_manager.get_item('source_paths')))
+            if source_audio_path:
+                print(f"Replacing audio")
+                if replace_audio(state_manager.get_item('target_path'), source_audio_path,
+                                 state_manager.get_item('output_path')):
+                    logger.debug(wording.get('replacing_audio_succeed'), __name__)
+                else:
+                    if is_process_stopping():
+                        return 4
+                    logger.warn(wording.get('replacing_audio_skipped'), __name__)
+                    move_temp_file(state_manager.get_item('target_path'), state_manager.get_item('output_path'))
             else:
-                if is_process_stopping():
-                    process_manager.end()
-                    return 4
-                logger.warn(wording.get('restoring_audio_skipped'), __name__)
-                print(f"Restoring audio skipped")
-                move_temp_file(state_manager.get_item('target_path'), state_manager.get_item('output_path'))
-    # clear temp
-    logger.debug(wording.get('clearing_temp'), __name__)
-    clear_temp_directory(state_manager.get_item('target_path'))
-    # validate video
-    if is_video(state_manager.get_item('output_path')):
-        seconds = '{:.2f}'.format((time() - start_time))
-        logger.info(wording.get('processing_video_succeed').format(seconds=seconds), __name__)
-        conditional_log_statistics()
-    else:
-        logger.error(wording.get('processing_video_failed'), __name__)
+                print(f"Restoring audio")
+                if restore_audio(state_manager.get_item('target_path'), state_manager.get_item('output_path'),
+                                 state_manager.get_item('output_video_fps')):
+                    logger.debug(wording.get('restoring_audio_succeed'), __name__)
+                    print(f"Restoring audio succeed")
+                else:
+                    if is_process_stopping():
+                        return 4
+                    logger.warn(wording.get('restoring_audio_skipped'), __name__)
+                    print(f"Restoring audio skipped")
+                    move_temp_file(state_manager.get_item('target_path'), state_manager.get_item('output_path'))
+        # clear temp
+        logger.debug(wording.get('clearing_temp'), __name__)
+        clear_temp_directory(state_manager.get_item('target_path'))
+        # validate video
+        if is_video(state_manager.get_item('output_path')):
+            seconds = '{:.2f}'.format((time() - start_time))
+            logger.info(wording.get('processing_video_succeed').format(seconds=seconds), __name__)
+            conditional_log_statistics()
+        else:
+            logger.error(wording.get('processing_video_failed'), __name__)
+            return 1
+        return 0
+    finally:
+        # Always ensure process_manager is properly reset
+        print(f"Ending process manager")
         process_manager.end()
-        return 1
-    process_manager.end()
-    return 0
 
 
 def is_process_stopping() -> bool:

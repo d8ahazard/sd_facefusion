@@ -2,9 +2,9 @@ from functools import lru_cache
 from time import sleep
 from typing import List
 
-import onnx
 from onnxruntime import InferenceSession
-
+import onnx
+from onnx import numpy_helper
 from facefusion import process_manager, state_manager
 from facefusion.app_context import detect_app_context
 from facefusion.execution import create_execution_providers, has_execution_provider
@@ -72,7 +72,7 @@ def create_inference_session(model_path: str, execution_device_id: str,
 @lru_cache(maxsize=None)
 def get_static_model_initializer(model_path: str) -> ModelInitializer:
     model = onnx.load(model_path)
-    return onnx.numpy_helper.to_array(model.graph.initializer[-1])
+    return numpy_helper.to_array(model.graph.initializer[-1])
 
 
 def resolve_execution_provider_keys(model_context: str, preferred_provider: str = "default") -> List[

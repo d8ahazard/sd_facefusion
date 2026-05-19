@@ -350,7 +350,12 @@ class LipSyncer(BaseProcessor):
         # Get faces in target frame
         many_faces = []
         try:
-            many_faces = sort_and_filter_faces(get_many_faces([target_vision_frame]))
+            # Check for cached faces from face buffer
+            cached_faces = inputs.get('cached_faces')
+            if cached_faces is not None:
+                many_faces = cached_faces
+            else:
+                many_faces = sort_and_filter_faces(get_many_faces([target_vision_frame], is_target_frame=True))
         except Exception as e:
             logger.error(f"Error detecting faces in target frame: {e}", __name__)
         
@@ -560,13 +565,20 @@ class LipSyncer(BaseProcessor):
                 
             # Process the frame
             target_vision_frame = read_image(target_vision_path)
-            result_frame = self.process_frame(
-                {
-                    'reference_faces': reference_faces,
-                    'source_audio_frame': source_audio_frame,
-                    'source_audio_frame_2': source_audio_frame_2,
-                    'target_vision_frame': target_vision_frame
-                })
+            
+            # Build input dict with cached data if available
+            process_inputs = {
+                'reference_faces': reference_faces,
+                'source_audio_frame': source_audio_frame,
+                'source_audio_frame_2': source_audio_frame_2,
+                'target_vision_frame': target_vision_frame
+            }
+            
+            # Add cached data from face buffer if available
+            if 'cached_faces' in queue_payload:
+                process_inputs['cached_faces'] = queue_payload['cached_faces']
+            
+            result_frame = self.process_frame(process_inputs)
             write_image(target_vision_path, result_frame)
             output_frames.append((frame_number, target_vision_path))
             

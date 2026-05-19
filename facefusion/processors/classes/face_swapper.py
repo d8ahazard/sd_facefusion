@@ -325,6 +325,11 @@ class FaceSwapper(BaseProcessor):
     preload: bool = True
     preferred_provider = 'cuda'
     src_cache = {}
+    
+    # Cached model options to avoid repeated lookups
+    _cached_model_options = None
+    _cached_model_key = None
+    _cached_input_names = None
 
     def register_args(self, program: ArgumentParser) -> None:
         group_processors = find_argument_group(program, 'processors')
@@ -377,6 +382,7 @@ class FaceSwapper(BaseProcessor):
 
     def post_process(self) -> None:
         self.src_cache = {}
+        self.clear_model_cache()  # Clear cached model options
         if state_manager.get_item("video_memory_strategy") in ["strict", "moderate"]:
             self.clear_inference_pool()
             clear_yolo_model_cache()  # Clear YOLO model cache to free memory
@@ -384,45 +390,57 @@ class FaceSwapper(BaseProcessor):
             clear_worker_modules()
 
     def process_frame(self, inputs: FaceSwapperInputs) -> VisionFrame:
-        reference_faces = inputs.get('reference_faces')
-        source_faces = inputs.get('source_faces')
+        reference_faces = inputs.get('reference_faces') or {}
+        source_faces = inputs.get('source_faces') or {}
         face_selector_mode = state_manager.get_item('face_selector_mode')
-        source_face = next(iter(source_faces.values())) if not face_selector_mode == 'reference' else None
+        source_face = next(iter(source_faces.values()), None) if face_selector_mode != 'reference' else None
         target_frame_number = inputs.get('target_frame_number', -1)
         target_vision_frame = inputs.get('target_vision_frame')
-        # We should probably use auto-masking here as we can detect objects once and calculate facial intersections or closeness
-        many_faces = sort_and_filter_faces(get_many_faces([target_vision_frame]), vision_frame=target_vision_frame)
         
-        # Calculate padding once per frame - now handled by auto-padding if enabled
-        padding = state_manager.get_item('face_mask_padding')
+        # Check for cached faces from face buffer
+        cached_faces = inputs.get('cached_faces')
+        if cached_faces is not None:
+            many_faces = cached_faces
+        else:
+            many_faces = sort_and_filter_faces(get_many_faces([target_vision_frame], is_target_frame=True), vision_frame=target_vision_frame)
+        
+        # Collect settings once per frame to avoid repeated state lookups
         auto_padding_model = state_manager.get_item('auto_padding_model')
+        padding = state_manager.get_item('face_mask_padding')
         
-        # Use manual padding system if no auto-padding model is selected
         if not auto_padding_model or auto_padding_model == "None":
             padding = update_padding(padding, target_frame_number)
         else:
-            padding = (0, 0, 0, 0)  # Reset padding to zero if auto-padding is enabled  
-        # Otherwise, padding will be determined per-face by auto-padding detection
+            padding = (0, 0, 0, 0)
+        
+        # Cache settings for swap_face calls
+        cached_settings = {
+            'pixel_boost_size': unpack_resolution(state_manager.get_item('face_swapper_pixel_boost')),
+            'face_mask_types': state_manager.get_item('face_mask_types') or [],
+            'face_mask_blur': state_manager.get_item('face_mask_blur'),
+            'face_mask_regions': state_manager.get_item('face_mask_regions'),
+            'auto_padding_model': auto_padding_model,
+        }
         
         src_idx = 0
         if face_selector_mode == 'many':
             if many_faces:
                 for target_face in many_faces:
-                    target_vision_frame = self.swap_face(source_face, target_face, target_vision_frame, src_idx, target_frame_number, padding)
+                    target_vision_frame = self.swap_face(source_face, target_face, target_vision_frame, src_idx, target_frame_number, padding, cached_settings)
             else:
                 print("No target face found")
         if face_selector_mode == 'one':
-           # watch.next("one_face")
             target_face = get_one_face(many_faces)
             if target_face:
-                target_vision_frame = self.swap_face(source_face, target_face, target_vision_frame, src_idx, target_frame_number, padding)
+                target_vision_frame = self.swap_face(source_face, target_face, target_vision_frame, src_idx, target_frame_number, padding, cached_settings)
             else:
                 logger.info("No target face found", __name__)
         if face_selector_mode == 'reference':
-            # Make a unique set of keys from reference_faces and source_faces
-            reference_face_keys = set(reference_faces.keys())
-            source_face_keys = set(source_faces.keys())
-            all_keys = reference_face_keys.union(source_face_keys)  # Combined set of keys
+            reference_face_keys = set(reference_faces.keys()) if reference_faces else set()
+            source_face_keys = set(source_faces.keys()) if source_faces else set()
+            all_keys = reference_face_keys.union(source_face_keys)
+            
+            reference_face_distance = state_manager.get_item('reference_face_distance')
 
             for src_face_idx in all_keys:
                 ref_faces = reference_faces.get(src_face_idx)
@@ -431,15 +449,12 @@ class FaceSwapper(BaseProcessor):
                 if not ref_faces or not src_face:
                     continue
 
-                similar_faces = find_similar_faces(
-                    many_faces, ref_faces,
-                    state_manager.get_item('reference_face_distance')
-                )
+                similar_faces = find_similar_faces(many_faces, ref_faces, reference_face_distance)
 
                 if similar_faces:
                     for similar_face in similar_faces:
                         target_vision_frame = self.swap_face(
-                            src_face, similar_face, target_vision_frame, src_face_idx, target_frame_number, padding
+                            src_face, similar_face, target_vision_frame, src_face_idx, target_frame_number, padding, cached_settings
                         )
 
         return target_vision_frame
@@ -452,13 +467,24 @@ class FaceSwapper(BaseProcessor):
             source_faces = queue_payload['source_faces']
             reference_faces = queue_payload['reference_faces']
             target_vision_frame = read_image(target_vision_path)
-            result_frame = self.process_frame(
-                {
-                    'reference_faces': reference_faces,
-                    'source_faces': source_faces,
-                    'target_vision_frame': target_vision_frame,
-                    'target_frame_number': target_frame_number
-                })
+            
+            # Build input dict with cached data if available
+            process_inputs = {
+                'reference_faces': reference_faces,
+                'source_faces': source_faces,
+                'target_vision_frame': target_vision_frame,
+                'target_frame_number': target_frame_number
+            }
+            
+            # Add cached data from face buffer if available
+            if 'cached_faces' in queue_payload:
+                process_inputs['cached_faces'] = queue_payload['cached_faces']
+            if 'cached_yolo_detections' in queue_payload:
+                process_inputs['cached_yolo_detections'] = queue_payload['cached_yolo_detections']
+            if 'cached_interpolated' in queue_payload:
+                process_inputs['cached_interpolated'] = queue_payload['cached_interpolated']
+            
+            result_frame = self.process_frame(process_inputs)
             write_image(target_vision_path, result_frame)
             output_frames.append((target_frame_number, target_vision_path))
         return output_frames
@@ -483,6 +509,28 @@ class FaceSwapper(BaseProcessor):
         face_swapper_model = 'inswapper_128' if has_execution_provider(
             'coreml') and face_swapper_model == 'inswapper_128_fp16' else face_swapper_model
         return self.MODEL_SET.get(face_swapper_model)
+    
+    def get_cached_model_options(self) -> ModelOptions:
+        """Get model options with caching to avoid repeated lookups"""
+        current_model = state_manager.get_item(self.model_key)
+        if self._cached_model_options is None or self._cached_model_key != current_model:
+            self._cached_model_options = self.get_model_options()
+            self._cached_model_key = current_model
+            self._cached_input_names = None  # Reset input names cache when model changes
+        return self._cached_model_options
+    
+    def get_cached_input_names(self) -> dict:
+        """Get face_swapper input names with caching"""
+        if self._cached_input_names is None:
+            face_swapper = self.get_inference_pool().get('face_swapper')
+            self._cached_input_names = {inp.name: inp.name for inp in face_swapper.get_inputs()}
+        return self._cached_input_names
+    
+    def clear_model_cache(self) -> None:
+        """Clear cached model options"""
+        self._cached_model_options = None
+        self._cached_model_key = None
+        self._cached_input_names = None
 
     def get_inference_pool(self) -> InferencePool:
         model_sources = self.get_model_options().get('sources')
@@ -494,11 +542,32 @@ class FaceSwapper(BaseProcessor):
         inference_manager.clear_inference_pool(model_context)
 
     def swap_face(self, source_face: Face, target_face: Face, temp_vision_frame: VisionFrame,
-                  src_idx: int, target_frame_number: int, padding: Padding) -> VisionFrame:
+                  src_idx: int, target_frame_number: int, padding: Padding,
+                  cached_settings: dict = None) -> VisionFrame:
+        """
+        Swap face with optional cached settings to avoid repeated state lookups.
+        cached_settings can contain: face_mask_types, face_mask_blur, face_mask_regions, 
+                                     auto_padding_model, pixel_boost_size
+        """
         masker = FaceMasker()
-        model_template = self.get_model_options().get('template')
-        model_size = self.get_model_options().get('size')
-        pixel_boost_size = unpack_resolution(state_manager.get_item('face_swapper_pixel_boost'))
+        model_options = self.get_cached_model_options()
+        model_template = model_options.get('template')
+        model_size = model_options.get('size')
+        
+        # Use cached settings if provided, otherwise lookup from state
+        if cached_settings:
+            pixel_boost_size = cached_settings.get('pixel_boost_size')
+            face_mask_types = cached_settings.get('face_mask_types')
+            face_mask_blur = cached_settings.get('face_mask_blur')
+            face_mask_regions = cached_settings.get('face_mask_regions')
+            auto_padding_model = cached_settings.get('auto_padding_model')
+        else:
+            pixel_boost_size = unpack_resolution(state_manager.get_item('face_swapper_pixel_boost'))
+            face_mask_types = state_manager.get_item('face_mask_types')
+            face_mask_blur = state_manager.get_item('face_mask_blur')
+            face_mask_regions = state_manager.get_item('face_mask_regions')
+            auto_padding_model = state_manager.get_item('auto_padding_model')
+        
         pixel_boost_total = pixel_boost_size[0] // model_size[0]
         crop_vision_frame, affine_matrix = warp_face_by_face_landmark_5(temp_vision_frame,
                                                                         target_face.landmark_set.get('5/68'),
@@ -506,42 +575,42 @@ class FaceSwapper(BaseProcessor):
         temp_vision_frames = []
         crop_masks = []
 
-        if 'box' in state_manager.get_item('face_mask_types'):
-            # Use auto-padding data if available
-            auto_padding_model = state_manager.get_item('auto_padding_model')
+        if 'box' in face_mask_types:
             if auto_padding_model and auto_padding_model != "None":
-                # Auto-padding mode: use detected padding or reasonable defaults
                 if hasattr(target_face, 'auto_padding_data') and target_face.auto_padding_data['padding_needed']:
                     effective_padding = target_face.auto_padding_data['recommended_padding']
                 else:
-                    # No objects detected, use default padding for auto-padding mode
                     effective_padding = (0, 0, 0, 0)
             else:
-                # Manual padding mode: use the calculated padding (which may be modified by update_padding)
                 effective_padding = padding
             
             box_mask = masker.create_static_box_mask(crop_vision_frame.shape[:2][::-1],
-                                                     state_manager.get_item('face_mask_blur'),
+                                                     face_mask_blur,
                                                      effective_padding)
             crop_masks.append(box_mask)
 
-        if 'occlusion' in state_manager.get_item('face_mask_types'):
+        if 'occlusion' in face_mask_types:
             occlusion_mask = masker.create_occlusion_mask(crop_vision_frame)
             crop_masks.append(occlusion_mask)
-            
-# Custom masks have been replaced by auto-padding system
-        # The auto-padding detection is now handled in sort_and_filter_faces
 
         pixel_boost_vision_frames = implode_pixel_boost(crop_vision_frame, pixel_boost_total, model_size)
-        for pixel_boost_vision_frame in pixel_boost_vision_frames:
-            pixel_boost_vision_frame = self.prepare_crop_frame(pixel_boost_vision_frame)
-            pixel_boost_vision_frame = self.forward_swap_face(source_face, pixel_boost_vision_frame, src_idx)
-            pixel_boost_vision_frame = self.normalize_crop_frame(pixel_boost_vision_frame)
-            temp_vision_frames.append(pixel_boost_vision_frame)
+        
+        # Batch prepare all tiles at once
+        prepared_frames = self.batch_prepare_crop_frames(pixel_boost_vision_frames, model_options)
+        
+        # Run inference on each tile (cannot be batched due to model limitations)
+        swapped_frames = []
+        for prepared_frame in prepared_frames:
+            swapped_frame = self.forward_swap_face_cached(source_face, prepared_frame, src_idx, model_options)
+            swapped_frames.append(swapped_frame)
+        
+        # Batch normalize all results
+        temp_vision_frames = self.batch_normalize_crop_frames(swapped_frames, model_options)
+        
         crop_vision_frame = explode_pixel_boost(temp_vision_frames, pixel_boost_total, model_size, pixel_boost_size)
 
-        if 'region' in state_manager.get_item('face_mask_types'):
-            region_mask = masker.create_region_mask(crop_vision_frame, state_manager.get_item('face_mask_regions'))
+        if 'region' in face_mask_types:
+            region_mask = masker.create_region_mask(crop_vision_frame, face_mask_regions)
             crop_masks.append(region_mask)
 
         crop_mask = numpy.minimum.reduce(crop_masks).clip(0, 1)
@@ -549,18 +618,22 @@ class FaceSwapper(BaseProcessor):
         return temp_vision_frame
 
     def forward_swap_face(self, source_face: Face, crop_vision_frame: VisionFrame, src_idx: int) -> VisionFrame:
+        return self.forward_swap_face_cached(source_face, crop_vision_frame, src_idx, self.get_cached_model_options())
+    
+    def forward_swap_face_cached(self, source_face: Face, crop_vision_frame: VisionFrame, src_idx: int, model_options: ModelOptions) -> VisionFrame:
+        """Forward swap with cached model options to avoid repeated lookups"""
         face_swapper = self.get_inference_pool().get('face_swapper')
-        model_type = self.get_model_options().get('type')
+        model_type = model_options.get('type')
+        input_names = self.get_cached_input_names()
         face_swapper_inputs = {}
 
-        for face_swapper_input in face_swapper.get_inputs():
-            if face_swapper_input.name == 'source':
-                if model_type == 'blendswap' or model_type == 'uniface':
-                    face_swapper_inputs[face_swapper_input.name] = self.prepare_source_frame(source_face, src_idx)
-                else:
-                    face_swapper_inputs[face_swapper_input.name] = self.prepare_source_embedding(source_face, src_idx)
-            if face_swapper_input.name == 'target':
-                face_swapper_inputs[face_swapper_input.name] = crop_vision_frame
+        if 'source' in input_names:
+            if model_type == 'blendswap' or model_type == 'uniface':
+                face_swapper_inputs['source'] = self.prepare_source_frame(source_face, src_idx)
+            else:
+                face_swapper_inputs['source'] = self.prepare_source_embedding(source_face, src_idx)
+        if 'target' in input_names:
+            face_swapper_inputs['target'] = crop_vision_frame
 
         with conditional_thread_semaphore():
             crop_vision_frame = face_swapper.run(None, face_swapper_inputs)[0][0]
@@ -570,7 +643,21 @@ class FaceSwapper(BaseProcessor):
         if src_idx in self.src_cache:
             return self.src_cache[src_idx]
         model_type = self.get_model_options().get('type')
-        source_vision_frame = read_static_image(get_first(state_manager.get_item('source_paths')))
+        
+        # Use correct source paths based on src_idx
+        if src_idx == 1:
+            source_paths = state_manager.get_item('source_paths_2')
+        else:
+            source_paths = state_manager.get_item('source_paths')
+        
+        if not source_paths:
+            # Fallback to source_frame_dict if direct paths not available
+            source_frame_dict = state_manager.get_item('source_frame_dict') or {}
+            source_paths = source_frame_dict.get(src_idx, [])
+        
+        source_vision_frame = read_static_image(get_first(source_paths)) if source_paths else None
+        if source_vision_frame is None:
+            return None
 
         if model_type == 'blendswap':
             source_vision_frame, _ = warp_face_by_face_landmark_5(source_vision_frame,
@@ -624,19 +711,48 @@ class FaceSwapper(BaseProcessor):
         return embedding
 
     def prepare_crop_frame(self, crop_vision_frame: VisionFrame) -> VisionFrame:
-        model_mean = self.get_model_options().get('mean')
-        model_standard_deviation = self.get_model_options().get('standard_deviation')
+        return self.prepare_crop_frame_cached(crop_vision_frame, self.get_cached_model_options())
+    
+    def prepare_crop_frame_cached(self, crop_vision_frame: VisionFrame, model_options: ModelOptions) -> VisionFrame:
+        """Prepare crop frame with cached model options"""
+        model_mean = model_options.get('mean')
+        model_standard_deviation = model_options.get('standard_deviation')
 
         crop_vision_frame = crop_vision_frame[:, :, ::-1] / 255.0
         crop_vision_frame = (crop_vision_frame - model_mean) / model_standard_deviation
         crop_vision_frame = crop_vision_frame.transpose(2, 0, 1)
         crop_vision_frame = numpy.expand_dims(crop_vision_frame, axis=0).astype(numpy.float32)
         return crop_vision_frame
+    
+    def batch_prepare_crop_frames(self, crop_frames: List[VisionFrame], model_options: ModelOptions) -> List[VisionFrame]:
+        """Batch prepare multiple crop frames with vectorized operations"""
+        if not crop_frames:
+            return []
+        
+        model_mean = numpy.array(model_options.get('mean'), dtype=numpy.float32)
+        model_std = numpy.array(model_options.get('standard_deviation'), dtype=numpy.float32)
+        
+        # Stack all frames: (N, H, W, C)
+        stacked = numpy.stack(crop_frames, axis=0)
+        
+        # BGR -> RGB and normalize: vectorized
+        stacked = stacked[:, :, :, ::-1] / 255.0
+        stacked = (stacked - model_mean) / model_std
+        
+        # Transpose to (N, C, H, W) and convert to float32
+        stacked = stacked.transpose(0, 3, 1, 2).astype(numpy.float32)
+        
+        # Split back into list with batch dim for ONNX: each is (1, C, H, W)
+        return [stacked[i:i+1] for i in range(stacked.shape[0])]
 
     def normalize_crop_frame(self, crop_vision_frame: VisionFrame) -> VisionFrame:
-        model_type = self.get_model_options().get('type')
-        model_mean = self.get_model_options().get('mean')
-        model_standard_deviation = self.get_model_options().get('standard_deviation')
+        return self.normalize_crop_frame_cached(crop_vision_frame, self.get_cached_model_options())
+    
+    def normalize_crop_frame_cached(self, crop_vision_frame: VisionFrame, model_options: ModelOptions) -> VisionFrame:
+        """Normalize crop frame with cached model options"""
+        model_type = model_options.get('type')
+        model_mean = model_options.get('mean')
+        model_standard_deviation = model_options.get('standard_deviation')
 
         crop_vision_frame = crop_vision_frame.transpose(1, 2, 0)
         if model_type == 'ghost' or model_type == 'uniface':
@@ -644,3 +760,29 @@ class FaceSwapper(BaseProcessor):
         crop_vision_frame = crop_vision_frame.clip(0, 1)
         crop_vision_frame = crop_vision_frame[:, :, ::-1] * 255
         return crop_vision_frame
+    
+    def batch_normalize_crop_frames(self, crop_frames: List[VisionFrame], model_options: ModelOptions) -> List[VisionFrame]:
+        """Batch normalize multiple crop frames with vectorized operations"""
+        if not crop_frames:
+            return []
+        
+        model_type = model_options.get('type')
+        model_mean = numpy.array(model_options.get('mean'), dtype=numpy.float32)
+        model_std = numpy.array(model_options.get('standard_deviation'), dtype=numpy.float32)
+        
+        # Stack all frames: each is (C, H, W), stack to (N, C, H, W)
+        stacked = numpy.stack(crop_frames, axis=0)
+        
+        # Transpose to (N, H, W, C)
+        stacked = stacked.transpose(0, 2, 3, 1)
+        
+        # Denormalize for ghost/uniface models
+        if model_type in ('ghost', 'uniface'):
+            stacked = stacked * model_std + model_mean
+        
+        # Clip and convert RGB -> BGR, scale to 255
+        stacked = stacked.clip(0, 1)
+        stacked = stacked[:, :, :, ::-1] * 255
+        
+        # Split back into list
+        return [stacked[i] for i in range(stacked.shape[0])]

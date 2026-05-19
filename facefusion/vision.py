@@ -79,7 +79,9 @@ def get_video_frame(video_path: str, frame_number: int = 0) -> Optional[VisionFr
         video_capture = cv2.VideoCapture(video_path)
         if video_capture.isOpened():
             frame_total = video_capture.get(cv2.CAP_PROP_FRAME_COUNT)
-            video_capture.set(cv2.CAP_PROP_POS_FRAMES, min(frame_total, frame_number - 1))
+            # CAP_PROP_POS_FRAMES is 0-indexed, clamp to valid range [0, frame_total-1]
+            target_frame = max(0, min(int(frame_total) - 1, frame_number))
+            video_capture.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
             has_vision_frame, vision_frame = video_capture.read()
             video_capture.release()
             if has_vision_frame:

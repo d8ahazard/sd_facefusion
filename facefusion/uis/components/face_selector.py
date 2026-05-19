@@ -42,7 +42,8 @@ FACE_SELECTOR_GROUP: Optional[gradio.Group] = None
 current_reference_faces = []
 current_reference_frames = []
 
-# Stores the selected reference face data
+# Stores the selected reference face data with their original face indices
+# Each entry is a dict: {'face_data': Face, 'original_face_index': int, 'frame_number': int}
 current_selected_faces = []
 current_selected_faces_2 = []
 
@@ -50,6 +51,32 @@ current_selected_faces_2 = []
 selector_face_index = -1
 selected_face_index = -1
 selected_face_index_2 = -1
+
+
+def find_first_frame_with_faces(target_path: str, max_frames: int = 300) -> int:
+    """
+    Scan video frames to find the first frame containing detectable faces.
+    Returns the frame number if found, or -1 if no faces found within max_frames.
+    """
+    if not is_video(target_path):
+        return -1
+    
+    total_frames = count_video_frame_total(target_path)
+    frames_to_scan = min(max_frames, total_frames)
+    
+    for frame_number in range(frames_to_scan):
+        try:
+            frame = get_video_frame(target_path, frame_number)
+            if frame is not None:
+                faces = get_many_faces([frame])
+                if faces and len(faces) > 0:
+                    print(f"Found faces at frame {frame_number}")
+                    return frame_number
+        except Exception as e:
+            print(f"Error scanning frame {frame_number}: {e}")
+            continue
+    
+    return -1
 
 
 def render() -> None:
@@ -344,11 +371,17 @@ def listen() -> None:
         ]
     )
 
-    for ui_component in get_ui_components(['target_image', 'target_video']):
+    preview_frame_slider = get_ui_component('preview_frame_slider')
+    # Include target_file for upload events - this is where actual file uploads go
+    for ui_component in get_ui_components(['target_file', 'target_image', 'target_video']):
+        if ui_component is None:
+            continue
         for method in ['upload', 'change', 'clear']:
+            if not hasattr(ui_component, method):
+                continue
             getattr(ui_component, method)(
                 update_reference_face_position,
-                outputs=[]
+                outputs=[preview_frame_slider] if preview_frame_slider else []
             )
             getattr(ui_component, method)(
                 update_reference_position_gallery,
@@ -452,8 +485,17 @@ def clear_and_update_reference_face_position(event: gradio.SelectData) -> gradio
     return update_reference_position_gallery(), clear_mask_times()
 
 
-def update_reference_face_position(reference_face_position: int = 0) -> None:
+def update_reference_face_position(reference_face_position: int = 0) -> gradio.update:
     state_manager.set_item('reference_face_position', reference_face_position)
+    # Auto-find first frame with faces for newly loaded videos
+    target_path = state_manager.get_item('target_path')
+    if is_video(target_path):
+        first_face_frame = find_first_frame_with_faces(target_path)
+        # -1 means no faces found; >= 0 means a valid frame (including frame 0)
+        if first_face_frame >= 0:
+            state_manager.set_item('reference_frame_number', first_face_frame)
+            return gradio.update(value=first_face_frame)
+    return gradio.update()
 
 
 def update_reference_face_distance(reference_face_distance: float) -> None:
@@ -572,7 +614,12 @@ def append_reference_face(src_gallery, dest_gallery, reference_frame_number, src
             ))
             reference_face_dict[src_face_idx] = ref_face_list
             state_manager.set_item("reference_face_dict", reference_face_dict)
-            current_selected_faces.append(face_data)
+            # Store both face data and original face index for proper removal later
+            current_selected_faces.append({
+                'face_data': face_data,
+                'original_face_index': selector_face_index,
+                'frame_number': reference_frame_number
+            })
             dest_items.append(selected_item["name"])
 
         from facefusion.uis.components.preview import update_preview_image
@@ -588,9 +635,20 @@ def delete_reference_face(gallery, preview_frame_number, src_face_idx):
     selected_faces = current_selected_faces if src_face_idx == 0 else current_selected_faces_2
     selected_index = selected_face_index if src_face_idx == 0 else selected_face_index_2
 
-    if len(gallery) <= selected_index or len(selected_faces) <= selected_index:
-        print("Invalid index")
-        return gradio.update()
+    if len(gallery) <= selected_index or len(selected_faces) <= selected_index or selected_index < 0:
+        print(f"Invalid index: selected_index={selected_index}, gallery_len={len(gallery)}, selected_faces_len={len(selected_faces)}")
+        return gradio.update(), gradio.update(), gradio.update(), gradio.update()
+
+    # Get the original face index that was stored when the face was added
+    selected_face_entry = selected_faces[selected_index]
+    # Handle both old format (just face data) and new format (dict with metadata)
+    if isinstance(selected_face_entry, dict):
+        original_face_index = selected_face_entry.get('original_face_index', selected_index)
+        original_frame_number = selected_face_entry.get('frame_number', preview_frame_number)
+    else:
+        # Fallback for old format - use selected_index (may not work correctly)
+        original_face_index = selected_index
+        original_frame_number = preview_frame_number
 
     new_items = []
     for idx, item in enumerate(gallery):
@@ -603,11 +661,12 @@ def delete_reference_face(gallery, preview_frame_number, src_face_idx):
 
     ref_face_list = reference_face_dict.get(src_face_idx, [])
 
+    # Use the original face index and frame number for matching
     ref_face_list = [
         entry for entry in ref_face_list
         if not (
-            entry["frame_number"] == preview_frame_number and
-            entry["face_index"] == selected_index
+            entry["frame_number"] == original_frame_number and
+            entry["face_index"] == original_face_index
         )
     ]
 

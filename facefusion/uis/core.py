@@ -30,6 +30,71 @@ UI_LAYOUT_METHODS = \
         'run'
     ]
 
+# Mapping of UI component names to their state_manager keys for automatic reload
+COMPONENT_STATE_KEYS: Dict[str, str] = {
+    # Processors
+    'processors_checkbox_group': 'processors',
+    # Face Swapper
+    'face_swapper_model_dropdown': 'face_swapper_model',
+    'face_swapper_pixel_boost_dropdown': 'face_swapper_pixel_boost',
+    # Face Detector
+    'face_detector_model_dropdown': 'face_detector_model',
+    'face_detector_size_dropdown': 'face_detector_size',
+    'face_detector_angles_checkbox_group': 'face_detector_angles',
+    'face_detector_score_slider': 'face_detector_score',
+    # Face Mask
+    'face_mask_types_checkbox_group': 'face_mask_types',
+    'face_mask_regions_checkbox_group': 'face_mask_regions',
+    'face_mask_blur_slider': 'face_mask_blur',
+    'auto_padding_model_dropdown': 'auto_padding_model',
+    'auto_padding_confidence_slider': 'auto_padding_confidence',
+    'auto_padding_intersection_threshold_slider': 'auto_padding_intersection_threshold',
+    # Face Selector
+    'face_selector_mode_dropdown': 'face_selector_mode',
+    'face_selector_order_dropdown': 'face_selector_order',
+    'face_selector_gender_dropdown': 'face_selector_gender',
+    'face_selector_race_dropdown': 'face_selector_race',
+    'reference_face_distance_slider': 'reference_face_distance',
+    # Face Enhancer
+    'face_enhancer_model_dropdown': 'face_enhancer_model',
+    'face_enhancer_blend_slider': 'face_enhancer_blend',
+    # Frame Enhancer
+    'frame_enhancer_model_dropdown': 'frame_enhancer_model',
+    'frame_enhancer_blend_slider': 'frame_enhancer_blend',
+    # Execution
+    'execution_thread_count_slider': 'execution_thread_count',
+    'execution_queue_count_slider': 'execution_queue_count',
+    # Face Landmarker
+    'face_landmarker_model_dropdown': 'face_landmarker_model',
+    'face_landmarker_score_slider': 'face_landmarker_score',
+    # Frame Colorizer
+    'frame_colorizer_model_dropdown': 'frame_colorizer_model',
+    'frame_colorizer_blend_slider': 'frame_colorizer_blend',
+    'frame_colorizer_size_dropdown': 'frame_colorizer_size',
+    # Lip Syncer
+    'lip_syncer_model_dropdown': 'lip_syncer_model',
+    # Age Modifier
+    'age_modifier_model_dropdown': 'age_modifier_model',
+    'age_modifier_direction_slider': 'age_modifier_direction',
+    # Expression Restorer
+    'expression_restorer_model_dropdown': 'expression_restorer_model',
+    'expression_restorer_factor_slider': 'expression_restorer_factor',
+    # Face Editor
+    'face_editor_model_dropdown': 'face_editor_model',
+    # Style Changer
+    'style_changer_model_dropdown': 'style_changer_model',
+    # UI Workflow
+    'ui_workflow_dropdown': 'ui_workflow',
+}
+
+# Components that need special handling (tuples, etc.)
+COMPONENT_SPECIAL_KEYS: Dict[str, tuple] = {
+    'face_mask_padding_top_slider': ('face_mask_padding', 0),
+    'face_mask_padding_right_slider': ('face_mask_padding', 1),
+    'face_mask_padding_bottom_slider': ('face_mask_padding', 2),
+    'face_mask_padding_left_slider': ('face_mask_padding', 3),
+}
+
 
 def load_ui_layout_module(ui_layout: str) -> Any:
     try:
@@ -82,6 +147,67 @@ def register_ui_component(component_name: ComponentName, component: Component) -
         except AttributeError:
             component.elem_id = component_elem_id
         UI_COMPONENTS[component_name] = component
+
+
+def get_valid_reload_components() -> List[tuple]:
+    """
+    Get list of (component, state_key, is_special, index) tuples for valid registered components.
+    Must be called AFTER all components are registered (after render() calls).
+    """
+    valid_components = []
+    
+    # Standard components
+    for component_name in COMPONENT_STATE_KEYS:
+        component = get_ui_component(component_name)
+        if component is not None:
+            state_key = COMPONENT_STATE_KEYS[component_name]
+            valid_components.append((component, state_key, False, None))
+    
+    # Special components (tuple values)
+    for component_name in COMPONENT_SPECIAL_KEYS:
+        component = get_ui_component(component_name)
+        if component is not None:
+            state_key, index = COMPONENT_SPECIAL_KEYS[component_name]
+            valid_components.append((component, state_key, True, index))
+    
+    return valid_components
+
+
+def reload_all_settings() -> tuple:
+    """
+    Reload all UI component values from state_manager.
+    Called automatically on page load/reconnect via gr.Blocks.load event.
+    """
+    valid_components = get_valid_reload_components()
+    updates = []
+    
+    for component, state_key, is_special, index in valid_components:
+        value = state_manager.get_item(state_key)
+        
+        if is_special:
+            # Handle tuple values (like face_mask_padding)
+            if value is not None and isinstance(value, (list, tuple)) and len(value) > index:
+                updates.append(gradio.update(value=value[index]))
+            else:
+                updates.append(gradio.update())
+        else:
+            # Standard values
+            if value is not None:
+                updates.append(gradio.update(value=value))
+            else:
+                updates.append(gradio.update())
+    
+    return tuple(updates)
+
+
+def get_reload_outputs() -> List[Component]:
+    """
+    Get list of UI components that will be updated by reload_all_settings().
+    Must be called AFTER all components are registered (after render() calls).
+    Only returns non-None components to avoid Gradio errors.
+    """
+    valid_components = get_valid_reload_components()
+    return [component for component, _, _, _ in valid_components]
 
 
 def launch() -> None:

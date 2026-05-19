@@ -29,7 +29,8 @@ def render() -> None:
         visible=False
     )
     OUTPUT_VIDEO = gradio.Video(
-        label=wording.get('uis.output_image_or_video')
+        label=wording.get('uis.output_image_or_video'),
+        visible=False
     )
     CHECK_STATUS_BUTTON = gradio.Button(
         value=wording.get('uis.check_status_button'),
@@ -56,10 +57,22 @@ def update_status():
     status = FFStatus()
     out_video = gradio.update()
     out_image = gradio.update()
+    
+    # Update output video if path is set
+    if status.output_video_path and os.path.exists(status.output_video_path):
+        out_video = gradio.update(value=status.output_video_path, visible=True)
+        out_image = gradio.update(value=None, visible=False)
+    # Update output image if path is set
+    elif status.output_image_path and os.path.exists(status.output_image_path):
+        out_image = gradio.update(value=status.output_image_path, visible=True)
+        out_video = gradio.update(value=None, visible=False)
+    
+    # Update preview image
     if status.preview_image and os.path.exists(status.preview_image):
         preview_image = gradio.update(value=status.preview_image, visible=True)
     else:
         preview_image = gradio.update(visible=False)
+    
     return gradio.update(visible=True, value=format_status()), out_image, preview_image, out_video
 
 

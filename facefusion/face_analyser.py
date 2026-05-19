@@ -26,11 +26,30 @@ classifier = FaceClassifier()
 
 
 def create_faces(vision_frame: VisionFrame, bounding_boxes: List[BoundingBox], face_scores: List[Score],
-                 face_landmarks_5: List[FaceLandmark5]) -> List[Face]:
+                 face_landmarks_5: List[FaceLandmark5], skip_expensive: bool = False) -> List[Face]:
+    """
+    Create Face objects from detection results.
+    
+    Args:
+        skip_expensive: If True, skip classification (for target frames). Embedding is still
+                       computed in reference mode since it's needed for face matching.
+    """
     faces = []
     nms_threshold = get_nms_threshold(state_manager.get_item('face_detector_model'),
                                       state_manager.get_item('face_detector_angles'))
     keep_indices = apply_nms(bounding_boxes, face_scores, state_manager.get_item('face_detector_score'), nms_threshold)
+    
+    # Check if we need embeddings - ALWAYS needed in reference mode for face matching
+    face_selector_mode = state_manager.get_item('face_selector_mode')
+    need_embedding = face_selector_mode == 'reference'
+    
+    # Check if we need classification (only if filtering by gender/age/race and not skipping)
+    need_classification = not skip_expensive and (
+        state_manager.get_item('face_selector_gender') is not None or
+        state_manager.get_item('face_selector_race') is not None or
+        state_manager.get_item('face_selector_age_start') is not None or
+        state_manager.get_item('face_selector_age_end') is not None
+    )
 
     for index in keep_indices:
         bounding_box = bounding_boxes[index]
@@ -60,8 +79,20 @@ def create_faces(vision_frame: VisionFrame, bounding_boxes: List[BoundingBox], f
                 'detector': face_score,
                 'landmarker': face_landmark_score_68
             }
-        embedding, normed_embedding = recognizer.calc_embedding(vision_frame, face_landmark_set.get('5/68'))
-        gender, age, race = classifier.classify_face(vision_frame, face_landmark_set.get('5/68'))
+        
+        # Only compute embedding if needed (reference mode)
+        if need_embedding:
+            embedding, normed_embedding = recognizer.calc_embedding(vision_frame, face_landmark_set.get('5/68'))
+        else:
+            embedding = numpy.zeros(512, dtype=numpy.float32)
+            normed_embedding = numpy.zeros(512, dtype=numpy.float32)
+        
+        # Only classify if filtering is enabled
+        if need_classification:
+            gender, age, race = classifier.classify_face(vision_frame, face_landmark_set.get('5/68'))
+        else:
+            gender, age, race = None, None, None
+            
         faces.append(Face(
             bounding_box=bounding_box,
             score_set=face_score_set,
@@ -120,7 +151,14 @@ def get_frame_hash(vision_frame: VisionFrame) -> int:
     return hash(vision_frame.tobytes())
 
 
-def get_many_faces(vision_frames: List[VisionFrame]) -> List[Face]:
+def get_many_faces(vision_frames: List[VisionFrame], is_target_frame: bool = False) -> List[Face]:
+    """
+    Detect faces in vision frames.
+    
+    Args:
+        vision_frames: List of frames to process
+        is_target_frame: If True, skip expensive operations (embedding/classification) unless needed
+    """
     many_faces: List[Face] = []
 
     for vision_frame in vision_frames:
@@ -154,13 +192,41 @@ def get_many_faces(vision_frames: List[VisionFrame]) -> List[Face]:
 
                 if all_bounding_boxes and all_face_scores and all_face_landmarks_5 and state_manager.get_item(
                         'face_detector_score') > 0:
-                    faces = create_faces(vision_frame, all_bounding_boxes, all_face_scores, all_face_landmarks_5)
+                    faces = create_faces(vision_frame, all_bounding_boxes, all_face_scores, all_face_landmarks_5, 
+                                        skip_expensive=is_target_frame)
                     if faces:
                         many_faces.extend(faces)
                         set_static_faces(vision_frame, faces)
                         vision_frame_cache[frame_hash] = faces  # Cache the result
 
     return many_faces
+
+
+def sync_source_frame_dict():
+    """
+    Sync source_frame_dict with source_paths and source_paths_2.
+    Ensures that if only source_paths_2 is defined, it's properly mapped.
+    """
+    source_frame_dict = state_manager.get_item('source_frame_dict') or {}
+    source_paths = state_manager.get_item('source_paths')
+    source_paths_2 = state_manager.get_item('source_paths_2')
+    
+    updated = False
+    
+    # Sync source_paths to index 0 if not already set
+    if source_paths and (0 not in source_frame_dict or source_frame_dict.get(0) != source_paths):
+        source_frame_dict[0] = source_paths
+        updated = True
+    
+    # Sync source_paths_2 to index 1 if not already set
+    if source_paths_2 and (1 not in source_frame_dict or source_frame_dict.get(1) != source_paths_2):
+        source_frame_dict[1] = source_paths_2
+        updated = True
+    
+    if updated:
+        state_manager.set_item('source_frame_dict', source_frame_dict)
+    
+    return source_frame_dict
 
 
 def get_average_faces():
@@ -172,7 +238,8 @@ def get_average_faces():
     if AVERAGE_FACE_DICT is None:
         AVERAGE_FACE_DICT = {}
 
-    source_frame_dict = state_manager.get_item('source_frame_dict') or {}
+    # Sync source_frame_dict with source_paths and source_paths_2
+    source_frame_dict = sync_source_frame_dict()
     new_average_face_dict = {}
     # Make a copy of source_frame_dict so we avoid issues with the original changing during iteration
     source_frame_dict = source_frame_dict.copy()

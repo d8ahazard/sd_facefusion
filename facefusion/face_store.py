@@ -92,6 +92,11 @@ def get_reference_faces() -> Dict[int, List[Face]]:
     from facefusion.face_analyser import get_average_faces
     global FACE_STORE
     reference_face_dict = state_manager.get_item('reference_face_dict')
+    
+    # Guard against None - return empty dict if reference_face_dict is not set
+    if not reference_face_dict:
+        return {}
+    
     stored_faces = FACE_STORE.get('reference_faces', {})
 
     for source_face_index, src_face_refs in reference_face_dict.items():

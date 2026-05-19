@@ -24,9 +24,20 @@ def compare_faces(face: Face, reference_face: Face, face_distance: float) -> boo
 
 
 def calc_face_distance(face: Face, reference_face: Face) -> float:
-    if hasattr(face, 'normed_embedding') and hasattr(reference_face, 'normed_embedding'):
+    if (hasattr(face, 'normed_embedding') and hasattr(reference_face, 'normed_embedding') and
+        face.normed_embedding is not None and reference_face.normed_embedding is not None):
         return 1 - numpy.dot(face.normed_embedding, reference_face.normed_embedding)
-    return 1
+    # If embeddings not available (e.g., from lightweight face buffer scan),
+    # fall back to position-based distance
+    if hasattr(face, 'bounding_box') and hasattr(reference_face, 'bounding_box'):
+        face_center = [(face.bounding_box[0] + face.bounding_box[2]) / 2, 
+                      (face.bounding_box[1] + face.bounding_box[3]) / 2]
+        ref_center = [(reference_face.bounding_box[0] + reference_face.bounding_box[2]) / 2,
+                     (reference_face.bounding_box[1] + reference_face.bounding_box[3]) / 2]
+        position_dist = numpy.sqrt((face_center[0] - ref_center[0])**2 + (face_center[1] - ref_center[1])**2)
+        # Normalize to 0-1 range (assuming 1000px is maximum reasonable distance)
+        return min(position_dist / 1000.0, 1.0)
+    return 1  # Maximum distance if can't calculate
 
 
 def sort_and_filter_faces(faces: List[Face], sorts=None, vision_frame: VisionFrame = None) -> List[Face]:

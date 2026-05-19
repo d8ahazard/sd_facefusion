@@ -35,13 +35,29 @@ def get_video_filename(title: str) -> str:
     return safe_title
 
 
+def _get_impersonate_target():
+    """Get ImpersonateTarget for Chrome if curl_cffi is available"""
+    try:
+        from yt_dlp.networking.impersonate import ImpersonateTarget
+        return ImpersonateTarget.from_str('chrome')
+    except (ImportError, Exception) as e:
+        print(f"Impersonation not available: {e}")
+        return None
+
+
 def download_video(target_url: str) -> str:
     try:
+        # Get impersonate target if available
+        impersonate_target = _get_impersonate_target()
+        
         # Step 1: Fetch video info
         ydl_opts_info = {
             'format': 'bestvideo+bestaudio/best',
-            'skip_download': True  # Only fetch metadata
+            'skip_download': True,  # Only fetch metadata
         }
+        if impersonate_target:
+            ydl_opts_info['impersonate'] = impersonate_target
+        
         with YoutubeDL(ydl_opts_info) as ydl:
             info_dict = ydl.extract_info(target_url, download=False)
             video_title = info_dict.get('title')
@@ -65,6 +81,9 @@ def download_video(target_url: str) -> str:
             'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
             'outtmpl': video_path,  # Save to sanitized path
         }
+        if impersonate_target:
+            ydl_opts_download['impersonate'] = impersonate_target
+        
         with YoutubeDL(ydl_opts_download) as ydl:
             ydl.download([target_url])
 
@@ -76,7 +95,10 @@ def download_video(target_url: str) -> str:
             print("Download completed, but the file could not be found.")
             return ""
     except Exception as e:
+        import traceback
         print(f"An error occurred during video processing: {e}")
+        print(f"Exception type: {type(e).__name__}")
+        traceback.print_exc()
         return ""
 
 

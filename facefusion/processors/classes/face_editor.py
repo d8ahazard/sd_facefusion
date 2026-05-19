@@ -405,7 +405,13 @@ class FaceEditor(BaseProcessor):
     def process_frame(self, inputs: FaceEditorInputs) -> VisionFrame:
         reference_faces = inputs.get('reference_faces')
         target_vision_frame = inputs.get('target_vision_frame')
-        many_faces = sort_and_filter_faces(get_many_faces([target_vision_frame]))
+        
+        # Check for cached faces from face buffer
+        cached_faces = inputs.get('cached_faces')
+        if cached_faces is not None:
+            many_faces = cached_faces
+        else:
+            many_faces = sort_and_filter_faces(get_many_faces([target_vision_frame], is_target_frame=True))
 
         if state_manager.get_item('face_selector_mode') == 'many':
             if many_faces:

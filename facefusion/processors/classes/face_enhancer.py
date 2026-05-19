@@ -16,7 +16,7 @@ from facefusion.processors import choices as processors_choices
 from facefusion.processors.base_processor import BaseProcessor
 from facefusion.processors.typing import FaceEnhancerInputs
 from facefusion.program_helper import find_argument_group
-from facefusion.thread_helper import thread_semaphore
+from facefusion.thread_helper import conditional_thread_semaphore
 from facefusion.typing import ApplyStateItem, Args, Face, ModelSet, ProcessMode, \
     QueuePayload, VisionFrame
 from facefusion.vision import read_image, read_static_image, write_image
@@ -243,6 +243,8 @@ class FaceEnhancer(BaseProcessor):
 
     model_key = "face_enhancer_model"
     priority = 12
+    preload = True
+    preferred_provider = 'cuda'
 
     def register_args(self, program: ArgumentParser) -> None:
         group_processors = find_argument_group(program, "processors")
@@ -305,17 +307,18 @@ class FaceEnhancer(BaseProcessor):
         face_height = bbox[3] - bbox[1]  # bottom - top
         minimum_size = state_manager.get_item("face_enhancer_smart_minimum_size") or 250
         
-        if face_height >= minimum_size:
-            logger.debug(f"Face height {face_height} is greater than minimum size {minimum_size}, enhancing face", __name__)
-            return True
-        else:
-            logger.debug(f"Face height {face_height} is less than minimum size {minimum_size}, skipping face", __name__)
-            return False
+        return face_height >= minimum_size
 
     def process_frame(self, inputs: FaceEnhancerInputs) -> VisionFrame:
         reference_faces = inputs.get("reference_faces")
         target_vision_frame = inputs.get("target_vision_frame")
-        many_faces = sort_and_filter_faces(get_many_faces([target_vision_frame]), vision_frame=target_vision_frame)
+        
+        # Check for cached faces from face buffer
+        cached_faces = inputs.get('cached_faces')
+        if cached_faces is not None:
+            many_faces = cached_faces
+        else:
+            many_faces = sort_and_filter_faces(get_many_faces([target_vision_frame], is_target_frame=True), vision_frame=target_vision_frame)
 
         if state_manager.get_item("face_selector_mode") == "many":
             for target_face in many_faces:
@@ -341,10 +344,18 @@ class FaceEnhancer(BaseProcessor):
         for queue_payload in process_manager.manage(queue_payloads):
             target_vision_path = queue_payload["frame_path"]
             target_vision_frame = read_image(target_vision_path)
-            result_frame = self.process_frame({
+            
+            # Build input dict with cached data if available
+            process_inputs = {
                 "reference_faces": reference_faces,
                 "target_vision_frame": target_vision_frame,
-            })
+            }
+            
+            # Add cached data from face buffer if available
+            if 'cached_faces' in queue_payload:
+                process_inputs['cached_faces'] = queue_payload['cached_faces']
+            
+            result_frame = self.process_frame(process_inputs)
             write_image(target_vision_path, result_frame)
             output_frames.append((queue_payload["frame_number"], target_vision_path))
         return output_frames
@@ -410,7 +421,7 @@ class FaceEnhancer(BaseProcessor):
                 weight = numpy.array([1]).astype(numpy.double)
                 face_enhancer_inputs[face_enhancer_input.name] = weight
 
-        with thread_semaphore():
+        with conditional_thread_semaphore():
             crop_vision_frame = face_enhancer.run(None, face_enhancer_inputs)[0][0]
 
         return crop_vision_frame

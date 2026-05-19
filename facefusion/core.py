@@ -19,10 +19,11 @@ from facefusion.processors.core import get_processors_modules
 from facefusion.statistics import conditional_log_statistics
 from facefusion.temp_helper import clear_temp_directory, create_temp_directory, get_temp_file_path, \
     get_temp_frame_paths, move_temp_file
-from facefusion.typing import Args, ErrorCode, Face
+from facefusion.typing import Args, ErrorCode
 from facefusion.uis.ui_helper import suggest_output_path
 from facefusion.vision import pack_resolution, restrict_image_resolution, \
-    restrict_video_fps, restrict_video_resolution, unpack_resolution, detect_image_resolution, create_image_resolutions
+    restrict_video_fps, restrict_video_resolution, unpack_resolution, detect_image_resolution, \
+    detect_video_resolution, detect_video_fps
 from facefusion.workers.classes.content_analyser import ContentAnalyser
 from facefusion.workers.core import get_worker_modules
 
@@ -119,7 +120,21 @@ def conditional_process() -> ErrorCode:
                     if not img_proc:
                         failed = True
                 if is_video(file_path):
+                    logger.info(f"Processing video {file_path}", "CORE")
                     state_manager.set_item('target_path', file_path)
+                    # Detect resolution from each video individually (like images)
+                    # This ensures each video uses its own resolution in batch processing
+                    output_video_resolution = detect_video_resolution(file_path)
+                    if output_video_resolution:
+                        state_manager.set_item('output_video_resolution', pack_resolution(output_video_resolution))
+                    else:
+                        logger.error(f"Failed to detect resolution for video {file_path}", "CORE")
+                        failed = True
+                        continue
+                    # Detect fps from each video individually
+                    output_video_fps = detect_video_fps(file_path)
+                    if output_video_fps:
+                        state_manager.set_item('output_video_fps', output_video_fps)
                     img_proc = process_video(start_time)
                     if not img_proc:
                         failed = True
@@ -370,17 +385,79 @@ def process_video(start_time: float) -> ErrorCode:
                                                                               'output_video_resolution'))))
         temp_video_fps = restrict_video_fps(state_manager.get_item('target_path'),
                                             state_manager.get_item('output_video_fps'))
-        logger.info(wording.get('extracting_frames').format(resolution=temp_video_resolution, fps=temp_video_fps), __name__)
-        if extract_frames(state_manager.get_item('target_path'), temp_video_resolution, temp_video_fps):
-            logger.debug(wording.get('extracting_frames_succeed'), __name__)
+        
+        # Check if frames already extracted and valid
+        from facefusion.temp_marker import are_frames_valid, create_extraction_marker
+        
+        current_target = state_manager.get_item('target_path')
+        existing_temp_frames = get_temp_frame_paths(current_target)
+        
+        # Check marker file to see if frames are valid
+        frames_are_valid = are_frames_valid(current_target, temp_video_resolution, temp_video_fps)
+        
+        if frames_are_valid and existing_temp_frames:
+            logger.info(f"Valid extracted frames found ({len(existing_temp_frames)} frames), skipping extraction!", __name__)
+            print(f"✓ Using existing frames (unmodified, same resolution/FPS)")
         else:
-            if is_process_stopping():
-                return 4
-            logger.error(wording.get('extracting_frames_failed'), __name__)
-            return 1
+            if existing_temp_frames and not frames_are_valid:
+                logger.info("Existing frames are outdated or modified, re-extracting...", __name__)
+                print(f"⚠ Re-extracting frames (parameters changed or frames were modified)")
+            
+            logger.info(wording.get('extracting_frames').format(resolution=temp_video_resolution, fps=temp_video_fps), __name__)
+            if extract_frames(current_target, temp_video_resolution, temp_video_fps):
+                logger.debug(wording.get('extracting_frames_succeed'), __name__)
+                # Create marker after successful extraction
+                new_temp_frames = get_temp_frame_paths(current_target)
+                create_extraction_marker(current_target, temp_video_resolution, temp_video_fps, len(new_temp_frames))
+            else:
+                if is_process_stopping():
+                    return 4
+                logger.error(wording.get('extracting_frames_failed'), __name__)
+                return 1
         # process frames
         temp_frame_paths = get_temp_frame_paths(state_manager.get_item('target_path'))
         if temp_frame_paths:
+            # Face buffer pre-scan (if enabled)
+            if state_manager.get_item('face_buffer_enabled'):
+                from facefusion.face_buffer import scan_and_build_face_buffer
+                from facefusion.face_buffer_config import initialize_face_buffer_config
+                
+                initialize_face_buffer_config()
+                
+                # Check if we already have a valid cached scan from "Scan Now" button
+                existing_cache = state_manager.get_item('face_buffer_cache')
+                cached_video_path = state_manager.get_item('face_buffer_scan_video_path')
+                cached_settings = state_manager.get_item('face_buffer_scan_settings')
+                current_target = state_manager.get_item('target_path')
+                
+                # Validate cache is for same video and compatible settings
+                cache_valid = (
+                    existing_cache is not None and
+                    cached_video_path == current_target and
+                    cached_settings is not None and
+                    cached_settings.get('interpolation_mode') == state_manager.get_item('face_buffer_interpolation_mode') and
+                    cached_settings.get('max_gap_frames') == state_manager.get_item('face_buffer_max_gap_frames') and
+                    cached_settings.get('auto_padding_model') == state_manager.get_item('auto_padding_model')
+                )
+                
+                if cache_valid:
+                    logger.info("Face buffer: Using cached scan results from preview!", __name__)
+                    print(f"Face buffer: ✓ Using cached scan (skipping re-scan, saving time!)")
+                    face_buffer_cache = existing_cache
+                else:
+                    logger.info("Face buffer enabled - pre-scanning video...", __name__)
+                    print(f"Face buffer: Pre-scanning {len(temp_frame_paths)} frames...")
+                    
+                    face_buffer_cache = scan_and_build_face_buffer(
+                        temp_frame_paths,
+                        state_manager.get_item('auto_padding_model'),
+                        temp_video_fps
+                    )
+                    state_manager.set_item('face_buffer_cache', face_buffer_cache)
+                    print(f"Face buffer: Pre-scan complete!")
+            else:
+                state_manager.set_item('face_buffer_cache', None)
+            
             for processor_module in get_processors_modules(state_manager.get_item('processors')):
                 print(f"Processing {processor_module.display_name}")
                 logger.info(wording.get('processing'), processor_module.display_name)
@@ -388,6 +465,11 @@ def process_video(start_time: float) -> ErrorCode:
                 print(f"Post processing {processor_module.display_name}")
                 processor_module.post_process()
                 print(f"Post processing {processor_module.display_name} done in {time() - start_time} seconds")
+            
+            # Mark frames as processed now that all processors have completed
+            from facefusion.temp_marker import mark_frames_processed
+            mark_frames_processed(state_manager.get_item('target_path'))
+            
             if is_process_stopping():
                 return 4
         else:
@@ -435,6 +517,13 @@ def process_video(start_time: float) -> ErrorCode:
                     logger.warn(wording.get('restoring_audio_skipped'), __name__)
                     print(f"Restoring audio skipped")
                     move_temp_file(state_manager.get_item('target_path'), state_manager.get_item('output_path'))
+        # clean up face buffer cache
+        face_buffer_cache = state_manager.get_item('face_buffer_cache')
+        if face_buffer_cache:
+            logger.debug("Cleaning up face buffer cache", __name__)
+            face_buffer_cache.cleanup()
+            state_manager.set_item('face_buffer_cache', None)
+        
         # clear temp
         logger.debug(wording.get('clearing_temp'), __name__)
         clear_temp_directory(state_manager.get_item('target_path'))

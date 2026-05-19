@@ -113,7 +113,13 @@ class ExpressionRestorer(BaseProcessor):
         reference_faces = inputs.get("reference_faces")
         source_vision_frame = inputs.get("source_vision_frame")
         target_vision_frame = inputs.get("target_vision_frame")
-        many_faces = sort_and_filter_faces(get_many_faces([target_vision_frame]), vision_frame=target_vision_frame)
+        
+        # Check for cached faces from face buffer
+        cached_faces = inputs.get('cached_faces')
+        if cached_faces is not None:
+            many_faces = cached_faces
+        else:
+            many_faces = sort_and_filter_faces(get_many_faces([target_vision_frame], is_target_frame=True), vision_frame=target_vision_frame)
 
         face_selector_mode = state_manager.get_item("face_selector_mode")
         if face_selector_mode == "many":

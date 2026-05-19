@@ -17,10 +17,11 @@ from facefusion.memory import tune_performance
 from facefusion.processors.core import get_processors_modules
 from facefusion.program import create_program
 from facefusion.program_helper import validate_args
-from facefusion.uis.core import load_ui_layout_module
+from facefusion.uis.core import load_ui_layout_module, reload_all_settings, get_reload_outputs
 from facefusion.workers.core import get_worker_modules
 from facefusion.uis.components.instant_runner import create_and_run_job
 from facefusion.filesystem import TEMP_DIRECTORY_PATH
+from facefusion.ffmpeg import print_ffmpeg_capabilities, detect_nvenc_encoder
 from modules import script_callbacks, scripts, scripts_postprocessing
 
 # export CUDA_MODULE_LOADING=LAZY
@@ -126,6 +127,23 @@ def load_facefusion():
     state_manager.init_item("config_path", ff_ini)
 
     tune_performance()
+    
+    # Sanity check execution_thread_count - high values cause GPU contention
+    current_threads = state_manager.get_item('execution_thread_count')
+    max_recommended_threads = 8
+    if current_threads and current_threads > max_recommended_threads:
+        print(f"WARNING: execution_thread_count={current_threads} is too high for GPU work, capping to {max_recommended_threads}")
+        state_manager.set_item('execution_thread_count', max_recommended_threads)
+    
+    # Auto-set optimal video encoder based on hardware availability
+    nvenc_encoder = detect_nvenc_encoder()
+    if nvenc_encoder:
+        current_encoder = state_manager.get_item('output_video_encoder')
+        if current_encoder in ['libx264', 'libx265', None]:
+            state_manager.set_item('output_video_encoder', nvenc_encoder)
+            print(f"Auto-selected NVENC encoder: {nvenc_encoder}")
+    
+    print_ffmpeg_capabilities()
 
     with gr.Blocks() as ff_ui:
         with gr.Tabs():
@@ -141,6 +159,16 @@ def load_facefusion():
                 bench_layout = load_ui_layout_module("benchmark")
                 bench_layout.render()
                 bench_layout.listen()
+        
+        # Wire automatic settings reload on page load/reconnect
+        # get_reload_outputs() only returns valid (non-None) components
+        reload_outputs = get_reload_outputs()
+        if reload_outputs:
+            ff_ui.load(
+                fn=reload_all_settings,
+                outputs=reload_outputs
+            )
+        
         return ((ff_ui, "RD FaceFusion", "ff_ui_clean"),)
 
 

@@ -26,6 +26,8 @@ class FFStatus:
             self.cancelled = False
             self.time_start = None
             self.preview_image = None
+            self.output_image_path = None
+            self.output_video_path = None
             # Mark as initialized to prevent reinitialization, unless explicitly requested
             FFStatus._is_initialized = True
 
@@ -88,9 +90,20 @@ class FFStatus:
         self.job_current = 0
         self.time_start = None
         self.preview_image = None
+        self.output_image_path = None
+        self.output_video_path = None
+
+    def set_output_path(self, path: str, is_video: bool = False):
+        """Set the output path for the current job"""
+        if is_video:
+            self.output_video_path = path
+            self.output_image_path = None
+        else:
+            self.output_image_path = path
+            self.output_video_path = None
 
     def finish(self, status: str = None):
-        """Finish the current job"""
+        """Finish the current job - keep preview until explicitly cleared"""
         self.started = False
         self.cancelled = False
         self.queue_total = 0
@@ -98,10 +111,17 @@ class FFStatus:
         self.job_total = 0
         self.job_current = 0
         self.time_start = None
-        self.preview_image = None
+        # Don't clear preview_image here - let it persist until next job or explicit clear
+        # This fixes timing issues where preview disappears before output is shown
         self.status = ""
         if status:
             self.status = status
+
+    def clear_outputs(self):
+        """Explicitly clear all output paths and preview"""
+        self.preview_image = None
+        self.output_image_path = None
+        self.output_video_path = None
 
     @staticmethod
     def _compute_total_steps():

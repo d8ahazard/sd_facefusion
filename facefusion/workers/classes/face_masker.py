@@ -297,7 +297,7 @@ class FaceMasker(BaseWorker):
         logger.warning("create_custom_mask is deprecated, use detect_face_object_intersections instead")
         return None
 
-    def detect_face_object_intersections(self, vision_frame: VisionFrame, faces: List, auto_padding_model: str = None) -> Dict:
+    def detect_face_object_intersections(self, vision_frame: VisionFrame, faces: List, auto_padding_model: str = None, silent: bool = False) -> Dict:
         """
         Detects objects using YOLO and determines if they intersect with or are near detected faces.
         
@@ -305,6 +305,7 @@ class FaceMasker(BaseWorker):
             vision_frame: The full image frame
             faces: List of detected faces with bounding boxes
             auto_padding_model: Path to YOLO model to use for detection
+            silent: If True, suppress logging (for batch processing)
             
         Returns:
             Dict with face indices as keys and intersection info as values:
@@ -320,8 +321,8 @@ class FaceMasker(BaseWorker):
         if not auto_padding_model or auto_padding_model == "None":
             return {}
             
-        # Check if we're in batch processing mode - disable logging if so
-        is_batch_processing = process_manager.is_processing()
+        # Check if we're in batch processing mode or explicitly silenced
+        is_batch_processing = process_manager.is_processing() or silent
         
         from modules.paths_internal import models_path
         adetailer_path = os.path.join(models_path, "adetailer")
@@ -359,12 +360,13 @@ class FaceMasker(BaseWorker):
             device = "cuda" if torch.cuda.is_available() else "cpu"
             result = ultralytics_predict(model_path, pil_image, confidence=0.1, device=device)
             
-            if not is_batch_processing:
-                logger.info(f"Auto-padding: Using model {os.path.basename(model_path)}, raw detections: {len(result.bboxes)} objects")
+            # Suppress verbose logging during batch/silent mode
+            # if not is_batch_processing:
+            #     logger.info(f"Auto-padding: Using model {os.path.basename(model_path)}, raw detections: {len(result.bboxes)} objects")
 
             if not result.bboxes:
-                if not is_batch_processing:
-                    logger.info(f"Auto-padding: No objects detected by model {os.path.basename(model_path)} (even at 0.1 confidence)")
+                # if not is_batch_processing:
+                #     logger.info(f"Auto-padding: No objects detected by model {os.path.basename(model_path)} (even at 0.1 confidence)")
                 return {}
                 
             # Filter detections by user confidence threshold
@@ -380,12 +382,12 @@ class FaceMasker(BaseWorker):
                 else:
                     rejected_count += 1
                     
-            if not is_batch_processing:
-                logger.info(f"Auto-padding: After confidence filtering (threshold={confidence}): {len(filtered_bboxes)} objects accepted, {rejected_count} rejected")
+            # if not is_batch_processing:
+            #     logger.info(f"Auto-padding: After confidence filtering (threshold={confidence}): {len(filtered_bboxes)} objects accepted, {rejected_count} rejected")
             
             if not filtered_bboxes:
-                if not is_batch_processing:
-                    logger.info(f"Auto-padding: No objects meet confidence threshold {confidence}")
+                # if not is_batch_processing:
+                #     logger.info(f"Auto-padding: No objects meet confidence threshold {confidence}")
                 return {}
                 
             # Update result with filtered data
@@ -428,11 +430,11 @@ class FaceMasker(BaseWorker):
                     
                     obj_confidence = result.confidences[obj_idx] if obj_idx < len(result.confidences) else 0.0
                     
-                    # Log all detections for debugging - only during preview/single image processing
-                    if not is_batch_processing:
-                        logger.info(f"Auto-padding: Face {face_idx}, Object {obj_idx}: confidence={obj_confidence:.3f}, distance={distance:.1f}px, intersects={intersects}, is_close={is_close} (threshold={intersection_threshold}px)")
-                        logger.info(f"  Object bbox: [{obj_x1:.1f}, {obj_y1:.1f}, {obj_x2:.1f}, {obj_y2:.1f}]")
-                        logger.info(f"  Face bbox: [{face_bbox[0]:.1f}, {face_bbox[1]:.1f}, {face_bbox[2]:.1f}, {face_bbox[3]:.1f}]")
+                    # Detailed logging disabled during batch/silent mode to prevent spam
+                    # if not is_batch_processing:
+                    #     logger.info(f"Auto-padding: Face {face_idx}, Object {obj_idx}: confidence={obj_confidence:.3f}, distance={distance:.1f}px, intersects={intersects}, is_close={is_close} (threshold={intersection_threshold}px)")
+                    #     logger.info(f"  Object bbox: [{obj_x1:.1f}, {obj_y1:.1f}, {obj_x2:.1f}, {obj_y2:.1f}]")
+                    #     logger.info(f"  Face bbox: [{face_bbox[0]:.1f}, {face_bbox[1]:.1f}, {face_bbox[2]:.1f}, {face_bbox[3]:.1f}]")
                     
                     if intersects or is_close:
                         has_intersection = True
@@ -446,11 +448,11 @@ class FaceMasker(BaseWorker):
                             'is_close': is_close
                         }
                         intersecting_objects.append(obj_info)
-                        if not is_batch_processing:
-                            logger.info(f"  → ACCEPTED: Object will trigger auto-padding")
-                    else:
-                        if not is_batch_processing:
-                            logger.info(f"  → REJECTED: Object too far (distance={distance:.1f}px > threshold={intersection_threshold}px) and no intersection")
+                        # if not is_batch_processing:
+                        #     logger.info(f"  → ACCEPTED: Object will trigger auto-padding")
+                    # else:
+                    #     if not is_batch_processing:
+                    #         logger.info(f"  → REJECTED: Object too far (distance={distance:.1f}px > threshold={intersection_threshold}px) and no intersection")
                 
                 # Calculate recommended padding based on object positions
                 recommended_padding = (0, 0, 0, 0)  # top, right, bottom, left

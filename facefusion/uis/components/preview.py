@@ -370,9 +370,8 @@ def process_preview_frame(source_faces: Dict[int, Face],
         source_frame = target_vision_frame.copy()
 
         for frame_processor_module in processors:
-            reference_faces = (
-                get_reference_faces() if 'reference' in state_manager.get_item('face_selector_mode') else (
-                None, None))
+            face_selector_mode = state_manager.get_item('face_selector_mode') or ''
+            reference_faces = get_reference_faces() if 'reference' in face_selector_mode else {}
             try:
                 start_time = datetime.now()
                 #frame_processor_module = load_processor_module(frame_processor)

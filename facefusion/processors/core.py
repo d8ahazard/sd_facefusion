@@ -125,16 +125,18 @@ def multi_process_frames(temp_frame_paths: List[str], process_frames: ProcessFra
 
         def update_progress(preview_image: str = None) -> None:
             progress.update()
+            status.step()  # Increment job_current for progress tracking
+            # Set preview directly if path provided - caller already gates by frame_number % 10
             if preview_image is not None:
-                current_step = status.job_current
-                if current_step % 30 == 0 or current_step == status.job_total:
-                    status.preview_image = preview_image
+                status.preview_image = preview_image
 
         with ThreadPoolExecutor(max_workers=state_manager.get_item('execution_thread_count')) as executor:
             futures = []
             queue: Queue[QueuePayload] = create_queue(queue_payloads)
+            # Use execution_queue_count to batch multiple frames per task (was hardcoded to 1)
+            queue_count = state_manager.get_item('execution_queue_count') or 1
             while not queue.empty():
-                future = executor.submit(process_frames, pick_queue(queue, 1))
+                future = executor.submit(process_frames, pick_queue(queue, queue_count))
                 futures.append(future)
             for future_done in as_completed(futures):
                 try:
@@ -179,6 +181,9 @@ def create_queue_payloads(temp_frame_paths: List[str]) -> List[QueuePayload]:
         get_reference_faces() if 'reference' in facefusion.globals.face_selector_mode else (None, None))
 
     temp_frame_paths = sorted(temp_frame_paths, key=os.path.basename)
+    
+    # Check if face buffer cache is available
+    face_buffer_cache = state_manager.get_item('face_buffer_cache')
 
     for frame_number, frame_path in enumerate(temp_frame_paths):
         frame_payload: QueuePayload = \
@@ -188,5 +193,14 @@ def create_queue_payloads(temp_frame_paths: List[str]) -> List[QueuePayload]:
                 'source_faces': source_faces,
                 'reference_faces': reference_faces
             }
+        
+        # Add cached face data if available
+        if face_buffer_cache:
+            cached_data = face_buffer_cache.get_frame_data(frame_number)
+            if cached_data:
+                frame_payload['cached_faces'] = cached_data.faces
+                frame_payload['cached_yolo_detections'] = cached_data.yolo_detections
+                frame_payload['cached_interpolated'] = cached_data.interpolated
+        
         queue_payloads.append(frame_payload)
     return queue_payloads

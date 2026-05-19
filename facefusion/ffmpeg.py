@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import tempfile
 from datetime import datetime
+from functools import lru_cache
 from typing import List
 from typing import Optional, Union
 
@@ -15,6 +16,80 @@ from facefusion.filesystem import remove_file
 from facefusion.temp_helper import get_temp_file_path, get_temp_frames_pattern
 from facefusion.typing import AudioBuffer, Fps, OutputVideoPreset
 from facefusion.vision import restrict_video_fps
+
+
+@lru_cache(maxsize=1)
+def detect_cuda_hwaccel() -> bool:
+    """Detect if CUDA hardware acceleration is available in ffmpeg"""
+    try:
+        ffmpeg_path = shutil.which('ffmpeg')
+        if not ffmpeg_path:
+            return False
+        result = subprocess.run(
+            [ffmpeg_path, '-hide_banner', '-hwaccels'],
+            capture_output=True, text=True, timeout=10
+        )
+        return 'cuda' in result.stdout.lower()
+    except Exception:
+        return False
+
+
+@lru_cache(maxsize=1)
+def detect_nvdec_decoder() -> Optional[str]:
+    """Detect available NVDEC decoder (h264_cuvid or hevc_cuvid)"""
+    try:
+        ffmpeg_path = shutil.which('ffmpeg')
+        if not ffmpeg_path:
+            return None
+        result = subprocess.run(
+            [ffmpeg_path, '-hide_banner', '-decoders'],
+            capture_output=True, text=True, timeout=10
+        )
+        if 'h264_cuvid' in result.stdout:
+            return 'h264_cuvid'
+        return None
+    except Exception:
+        return None
+
+
+@lru_cache(maxsize=1)
+def detect_nvenc_encoder() -> Optional[str]:
+    """Detect available NVENC encoder (h264_nvenc or hevc_nvenc)"""
+    try:
+        ffmpeg_path = shutil.which('ffmpeg')
+        if not ffmpeg_path:
+            return None
+        result = subprocess.run(
+            [ffmpeg_path, '-hide_banner', '-encoders'],
+            capture_output=True, text=True, timeout=10
+        )
+        if 'h264_nvenc' in result.stdout:
+            return 'h264_nvenc'
+        return None
+    except Exception:
+        return None
+
+
+def get_optimal_video_encoder() -> str:
+    """Get the optimal video encoder, preferring NVENC if available"""
+    nvenc = detect_nvenc_encoder()
+    if nvenc:
+        return nvenc
+    return 'libx264'
+
+
+def print_ffmpeg_capabilities() -> None:
+    """Print available FFmpeg hardware acceleration capabilities"""
+    cuda_available = detect_cuda_hwaccel()
+    nvenc_encoder = detect_nvenc_encoder()
+    current_encoder = state_manager.get_item('output_video_encoder')
+    
+    print("=" * 50)
+    print("FFmpeg Hardware Acceleration Status:")
+    print(f"  CUDA Decoding: {'Available' if cuda_available else 'Not available'}")
+    print(f"  NVENC Encoding: {nvenc_encoder if nvenc_encoder else 'Not available'}")
+    print(f"  Active Encoder: {current_encoder}")
+    print("=" * 50)
 
 
 class MockProcess:
@@ -85,17 +160,59 @@ def extract_frames(target_path: str, temp_video_resolution: str, temp_video_fps:
     trim_frame_start = state_manager.get_item('trim_frame_start')
     trim_frame_end = state_manager.get_item('trim_frame_end')
     temp_frames_pattern = get_temp_frames_pattern(target_path, '%08d')
+    
+    # Try with CUDA hardware acceleration first, fall back to software if it fails
+    use_cuda = detect_cuda_hwaccel()
+    
+    if use_cuda:
+        result = _extract_frames_cuda(target_path, temp_video_resolution, temp_video_fps, 
+                                       trim_frame_start, trim_frame_end, temp_frames_pattern)
+        if result:
+            return True
+        print("CUDA extraction failed, falling back to software decoding")
+    
+    return _extract_frames_software(target_path, temp_video_resolution, temp_video_fps,
+                                     trim_frame_start, trim_frame_end, temp_frames_pattern)
+
+
+def _extract_frames_cuda(target_path: str, temp_video_resolution: str, temp_video_fps: Fps,
+                         trim_frame_start, trim_frame_end, temp_frames_pattern: str) -> bool:
+    """Extract frames using CUDA hardware acceleration"""
+    commands = ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda', '-i', target_path]
+    print("Using CUDA hardware acceleration for frame extraction")
+    
+    # Build video filter chain with hwdownload for GPU->CPU transfer
+    vf_parts = ['hwdownload', 'format=nv12']
+    
+    if isinstance(trim_frame_start, int) and isinstance(trim_frame_end, int):
+        vf_parts.append(f'trim=start_frame={trim_frame_start}:end_frame={trim_frame_end}')
+    elif isinstance(trim_frame_start, int):
+        vf_parts.append(f'trim=start_frame={trim_frame_start}')
+    elif isinstance(trim_frame_end, int):
+        vf_parts.append(f'trim=end_frame={trim_frame_end}')
+    
+    vf_parts.append(f'fps={temp_video_fps}')
+    vf_parts.append(f'scale={temp_video_resolution.replace("x", ":")}')
+    
+    commands.extend(['-vf', ','.join(vf_parts)])
+    commands.extend(['-q:v', '0', '-vsync', '0', temp_frames_pattern])
+    return run_ffmpeg(commands, True, "Extracting (CUDA)").returncode == 0
+
+
+def _extract_frames_software(target_path: str, temp_video_resolution: str, temp_video_fps: Fps,
+                              trim_frame_start, trim_frame_end, temp_frames_pattern: str) -> bool:
+    """Extract frames using software decoding"""
     commands = ['-i', target_path, '-s', str(temp_video_resolution), '-q:v', '0']
 
     if isinstance(trim_frame_start, int) and isinstance(trim_frame_end, int):
-        commands.extend(['-vf', 'trim=start_frame=' + str(trim_frame_start) + ':end_frame=' + str(
-            trim_frame_end) + ',fps=' + str(temp_video_fps)])
+        commands.extend(['-vf', f'trim=start_frame={trim_frame_start}:end_frame={trim_frame_end},fps={temp_video_fps}'])
     elif isinstance(trim_frame_start, int):
-        commands.extend(['-vf', 'trim=start_frame=' + str(trim_frame_start) + ',fps=' + str(temp_video_fps)])
+        commands.extend(['-vf', f'trim=start_frame={trim_frame_start},fps={temp_video_fps}'])
     elif isinstance(trim_frame_end, int):
-        commands.extend(['-vf', 'trim=end_frame=' + str(trim_frame_end) + ',fps=' + str(temp_video_fps)])
+        commands.extend(['-vf', f'trim=end_frame={trim_frame_end},fps={temp_video_fps}'])
     else:
-        commands.extend(['-vf', 'fps=' + str(temp_video_fps)])
+        commands.extend(['-vf', f'fps={temp_video_fps}'])
+    
     commands.extend(['-vsync', '0', temp_frames_pattern])
     return run_ffmpeg(commands, True, "Extracting").returncode == 0
 

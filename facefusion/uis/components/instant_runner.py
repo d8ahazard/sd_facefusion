@@ -100,7 +100,16 @@ def run() -> Tuple[gradio.update, gradio.update, gradio.update, gradio.update]:
     if job_manager.init_jobs(state_manager.get_item('jobs_path')):
         create_and_run_job(step_args)
         state_manager.set_item('output_path', output_path)
+        
+        # Set output path in status for polling to pick up
+        output_file = step_args.get('output_path')
+        if is_image(output_file):
+            status.set_output_path(output_file, is_video=False)
+        elif is_video(output_file):
+            status.set_output_path(output_file, is_video=True)
+        
         status.finish(f"Finished processing target file: {truncated_target_base_name}")
+    
     if is_image(step_args.get('output_path')):
         return gradio.update(visible=True), gradio.update(visible=False), gradio.update(
             value=step_args.get('output_path'), visible=True), gradio.update(value=None, visible=False)
@@ -108,8 +117,8 @@ def run() -> Tuple[gradio.update, gradio.update, gradio.update, gradio.update]:
         return gradio.update(visible=True), gradio.update(visible=False), gradio.update(value=None,
                                                                                         visible=False), gradio.update(
             value=step_args.get('output_path'), visible=True)
-    return gradio.update(visible=True), gradio.update(visible=False), gradio.update(value=None), gradio.update(
-        value=None)
+    return gradio.update(visible=True), gradio.update(visible=False), gradio.update(value=None, visible=False), gradio.update(
+        value=None, visible=False)
 
 
 def create_and_run_job(step_args: Args, keep_state: bool = True) -> bool:
@@ -143,10 +152,21 @@ def stop() -> Tuple[gradio.update, gradio.update]:
 
 
 def clear() -> Tuple[gradio.update, gradio.update]:
-    while process_manager.is_processing():
+    # Wait for processing to complete with timeout (max 30 seconds)
+    timeout_seconds = 30
+    waited = 0
+    while process_manager.is_processing() and waited < timeout_seconds:
         sleep(0.5)
+        waited += 0.5
+    
+    if waited >= timeout_seconds:
+        # Force stop if still processing after timeout
+        process_manager.stop()
+    
     if state_manager.get_item('target_path'):
         clear_temp_directory(state_manager.get_item('target_path'))
+    
     status = FFStatus()
+    status.clear_outputs()  # Clear output paths and preview
     status.finish(f"Cleared target file: {state_manager.get_item('target_path')}")
-    return gradio.update(value=None), gradio.update(value=None)
+    return gradio.update(value=None, visible=False), gradio.update(value=None, visible=False)

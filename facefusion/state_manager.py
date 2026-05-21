@@ -26,6 +26,8 @@ def get_item(key: Union[StateKey, ProcessorStateKey]) -> Any:
 
 
 def set_item(key: Union[StateKey, ProcessorStateKey], value: Any) -> None:
+    if key == 'face_detector_model' and value == 'yoloface':
+        value = 'yolo_face'
     app_context = detect_app_context()
     STATES[app_context][key] = value  # type:ignore
 

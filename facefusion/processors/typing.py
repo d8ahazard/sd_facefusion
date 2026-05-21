@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Literal, TypedDict
+from typing import Any, Dict, List, Literal, Tuple, TypedDict
 
 from numpy._typing import NDArray
 
@@ -12,7 +12,13 @@ FaceEditorModel = Literal['live_portrait']
 FaceEnhancerModel = Literal[
     'codeformer', 'gfpgan_1.2', 'gfpgan_1.3', 'gfpgan_1.4', 'gpen_bfr_256', 'gpen_bfr_512', 'gpen_bfr_1024', 'gpen_bfr_2048', 'restoreformer_plus_plus']
 FaceSwapperModel = Literal[
-    'blendswap_256', 'ghost_1_256', 'ghost_2_256', 'ghost_3_256', 'inswapper_128', 'inswapper_128_fp16', 'simswap_256', 'simswap_unofficial_512', 'uniface_256']
+    'blendswap_256', 'ghost_1_256', 'ghost_2_256', 'ghost_3_256', 'hififace_unofficial_256',
+    'hyperswap_1a_256', 'hyperswap_1b_256', 'hyperswap_1c_256',
+    'inswapper_128', 'inswapper_128_fp16', 'simswap_256', 'simswap_unofficial_512', 'uniface_256']
+DeepSwapperModel = str
+BackgroundRemoverModel = Literal[
+    'ben_2', 'birefnet_general', 'birefnet_portrait', 'corridor_key_1024', 'corridor_key_2048', 'isnet_general',
+    'modnet', 'ormbg', 'rmbg_1.4', 'rmbg_2.0', 'silueta', 'u2net_cloth', 'u2net_general', 'u2net_human', 'u2netp']
 FrameColorizerModel = Literal['ddcolor', 'ddcolor_artistic', 'deoldify', 'deoldify_artistic', 'deoldify_stable']
 FrameEnhancerModel = Literal[
     'clear_reality_x4', 'lsdir_x4', 'nomos8k_sc_x4', 'real_esrgan_x2', 'real_esrgan_x2_fp16', 'real_esrgan_x4', 'real_esrgan_x4_fp16', 'real_hatgan_x4', 'real_esrgan_x8', 'real_esrgan_x8_fp16', 'span_kendata_x4', 'ultra_sharp_x4']
@@ -56,6 +62,17 @@ FaceSwapperInputs = TypedDict('FaceSwapperInputs',
                                   'target_vision_frame': VisionFrame,
                                   'target_frame_number': int
                               })
+DeepSwapperInputs = TypedDict('DeepSwapperInputs',
+                              {
+                                  'reference_faces': Dict[int, FaceSet],
+                                  'source_faces': Dict[int, Face],
+                                  'target_vision_frame': VisionFrame,
+                                  'target_frame_number': int
+                              })
+BackgroundRemoverInputs = TypedDict('BackgroundRemoverInputs',
+                                    {
+                                        'target_vision_frame': VisionFrame
+                                    })
 FrameColorizerInputs = TypedDict('FrameColorizerInputs',
                                  {
                                      'target_vision_frame': VisionFrame
@@ -101,6 +118,11 @@ ProcessorStateKey = Literal[
     'face_enhancer_blend',
     'face_swapper_model',
     'face_swapper_pixel_boost',
+    'deep_swapper_model',
+    'deep_swapper_morph',
+    'background_remover_model',
+    'background_remover_fill_color',
+    'background_remover_despill_color',
     'frame_colorizer_model',
     'frame_colorizer_size',
     'frame_colorizer_blend',
@@ -139,6 +161,9 @@ ProcessorState = TypedDict('ProcessorState',
                                'face_enhancer_blend': int,
                                'face_swapper_model': FaceSwapperModel,
                                'face_swapper_pixel_boost': str,
+                               'background_remover_model': BackgroundRemoverModel,
+                               'background_remover_fill_color': Tuple[int, int, int, int],
+                               'background_remover_despill_color': Tuple[int, int, int, int],
                                'frame_colorizer_model': FrameColorizerModel,
                                'frame_colorizer_size': str,
                                'frame_colorizer_blend': int,

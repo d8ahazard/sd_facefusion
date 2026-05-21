@@ -1,6 +1,8 @@
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from facefusion.typing import Fps, Padding
+
+Color = Tuple[int, int, int, int]
 
 
 def normalize_padding(padding: Optional[List[int]]) -> Optional[Padding]:
@@ -18,4 +20,16 @@ def normalize_padding(padding: Optional[List[int]]) -> Optional[Padding]:
 def normalize_fps(fps: Optional[float]) -> Optional[Fps]:
     if isinstance(fps, (int, float)):
         return max(1.0, min(fps, 60.0))
+    return None
+
+
+def normalize_color(channels: Optional[List[int]]) -> Optional[Color]:
+    if channels and len(channels) == 1:
+        return channels[0], channels[0], channels[0], 255
+    if channels and len(channels) == 2:
+        return channels[0], channels[1], channels[0], 255
+    if channels and len(channels) == 3:
+        return channels[0], channels[1], channels[2], 255
+    if channels and len(channels) == 4:
+        return tuple(channels)  # type: ignore[return-value]
     return None

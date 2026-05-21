@@ -21,7 +21,8 @@ Upstream project: [facefusion/facefusion](https://github.com/facefusion/facefusi
   - Works with `.pt` models placed in `models/adetailer` (preferred). If a mask is available, it’s used; otherwise bounding boxes are converted to masks. Configurable confidence and intersection threshold.
   - Replaces the old "custom" mask type with a more robust, detection-driven workflow. Manual on/off markers are still available when Auto Padding is off.
 - **Additional/extended processors**: Ships face processors like `Face Swapper`, `Face Enhancer` (with smart enhance), `Expression Restorer` (LivePortrait-based options), `Face Editor`, `Face Debugger`, `Lip Syncer`, `Style Changer`, `Style Transfer`, `Frame Enhancer`, `Frame Colorizer` and more under `facefusion/processors/classes`.
-- **Enhanced face detection options**: Adds `yoloface` (default) and `yunet` in addition to upstream detectors.
+- **Enhanced face detection options**: `yolo_face` (default; `yoloface` jobs alias to this) and `yunet` in addition to upstream detectors.
+- **Upstream 3.6.1 merge (fork baseline)**: Hyperswap default swapper, swap weight slider, xseg_1/2/3 occluders, face mask areas, Deep Swapper + Background Remover processors, TensorRT + multi-GPU inference pools, output image/video scale. Content analyser / `nsfw_1` intentionally not ported. Processor layout remains `processors/classes/` (upstream `modules/` migration is planned).
 - **Job system and live previews**: Queue jobs, multi-step processing, and preview frames while processing.
 - **Model/download alignment**: Auto-downloads models into paths consistent with Automatic1111; leverages onnxruntime-gpu and caches YOLO models in-process for performance.
 

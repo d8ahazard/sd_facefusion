@@ -1,8 +1,8 @@
 import threading
 import traceback
 from datetime import datetime
-from time import sleep
-from typing import Any, Dict, Optional, Tuple
+from time import monotonic, sleep
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import gradio
@@ -30,6 +30,42 @@ PREVIEW_FRAME_FORWARD_FIVE_BUTTON: Optional[gradio.Button] = None
 PREVIEW_FRAME_ROW: Optional[gradio.Row] = None
 
 CURRENT_PREVIEW_FRAME_NUMBER = -1
+_BATCH_MAP_REFRESH = False
+_SLIDER_GUARD_UNTIL = 0.0
+
+
+def bind_preview_on_value_change(ui_component, callback, inputs, outputs) -> None:
+    """Sliders use release(); Number and other inputs use change()."""
+    if ui_component is None:
+        return
+    kwargs = dict(inputs=inputs, outputs=outputs, show_progress='hidden')
+    if hasattr(ui_component, 'release'):
+        ui_component.release(callback, **kwargs)
+    else:
+        ui_component.change(callback, **kwargs)
+
+
+def is_batch_map_refresh() -> bool:
+    """True while Map/preview batch refresh is updating the frame slider (ignore release events)."""
+    return _BATCH_MAP_REFRESH
+
+
+def should_ignore_slider_release() -> bool:
+    """Ignore stale slider.release events right after programmatic slider updates."""
+    return is_batch_map_refresh() or monotonic() < _SLIDER_GUARD_UNTIL
+
+
+def begin_programmatic_slider_update(guard_seconds: float = 1.0) -> None:
+    global _BATCH_MAP_REFRESH, _SLIDER_GUARD_UNTIL
+    _BATCH_MAP_REFRESH = True
+    _SLIDER_GUARD_UNTIL = monotonic() + guard_seconds
+
+
+def end_programmatic_slider_update() -> None:
+    global _BATCH_MAP_REFRESH
+    _BATCH_MAP_REFRESH = False
+
+
 AVG_FACE_1 = None
 AVG_FACE_2 = None
 SOURCE_FRAMES_1 = []
@@ -50,7 +86,8 @@ def render() -> None:
     preview_image_args: Dict[str, Any] = \
         {
             'label': wording.get('uis.preview_image'),
-            'interactive': False
+            'show_label': False,
+            'interactive': False,
         }
     preview_frame_slider_args: Dict[str, Any] = \
         {
@@ -60,35 +97,26 @@ def render() -> None:
             'maximum': 100,
             'visible': True
         }
-    #conditional_append_reference_faces()
-
-    source_faces = get_average_faces()
-    source_audio_path = get_first(filter_audio_paths(state_manager.get_item('source_paths')))
-    source_audio_path_2 = get_first(filter_audio_paths(state_manager.get_item('source_paths_2')))
-    if source_audio_path and state_manager.get_item('output_video_fps'):
-        source_audio_frame = get_audio_frame(source_audio_path, state_manager.get_item('output_video_fps'), 0)
-    else:
-        source_audio_frame = None
-    if source_audio_path_2 and state_manager.get_item('output_video_fps'):
-        source_audio_frame_2 = get_audio_frame(source_audio_path_2, state_manager.get_item('output_video_fps'), 0)
-    else:
-        source_audio_frame_2 = None
     target_path = state_manager.get_item('target_path')
     if is_image(target_path):
         target_frame = read_static_image(target_path)
-        preview_frame = process_preview_frame(source_faces,
-                                              source_audio_frame, source_audio_frame_2, target_frame, -1)
-        preview_image_args['value'] = normalize_frame_color(preview_frame)
+        if target_frame is not None:
+            preview_image_args['value'] = normalize_frame_color(
+                resize_frame_resolution(target_frame, (1024, 1024))
+            )
 
     if is_video(target_path):
-        frame_number = 0
-        temp_frame = get_video_frame(target_path, frame_number)
-        preview_frame = process_preview_frame(source_faces,
-                                              source_audio_frame, source_audio_frame_2, temp_frame, frame_number)
-        preview_image_args['value'] = normalize_frame_color(preview_frame)
-        preview_frame_slider_args['value'] = 0
+        frame_number = state_manager.get_item('reference_frame_number') or 0
+        temp_frame = get_video_frame(target_path, int(frame_number))
+        if temp_frame is not None:
+            preview_image_args['value'] = normalize_frame_color(
+                resize_frame_resolution(temp_frame, (1024, 1024))
+            )
+        preview_frame_slider_args['value'] = int(frame_number)
         preview_frame_slider_args['maximum'] = count_video_frame_total(target_path)
 
+    preview_image_args['elem_id'] = 'ff_map_preview_image'
+    preview_image_args['elem_classes'] = ['ff-map-preview']
     PREVIEW_IMAGE = gradio.Image(**preview_image_args)
     with gradio.Row(visible=is_video(state_manager.get_item('target_path'))) as PREVIEW_FRAME_ROW:
         PREVIEW_FRAME_BACK_FIVE_BUTTON = gradio.Button(
@@ -128,29 +156,157 @@ def render() -> None:
     register_ui_component('preview_frame_row', PREVIEW_FRAME_ROW)
 
 
+def get_target_preview_output_components() -> List:
+    """Preview + trim outputs (no detected-faces gallery)."""
+    from facefusion.uis.components import trim_frame as trim_frame_module
+
+    components: List = []
+    if PREVIEW_FRAME_SLIDER is not None:
+        components.append(PREVIEW_FRAME_SLIDER)
+    if PREVIEW_FRAME_ROW is not None:
+        components.append(PREVIEW_FRAME_ROW)
+    if PREVIEW_IMAGE is not None:
+        components.append(PREVIEW_IMAGE)
+    if trim_frame_module.TRIM_FRAME_START_SLIDER is not None:
+        components.append(trim_frame_module.TRIM_FRAME_START_SLIDER)
+    if trim_frame_module.TRIM_FRAME_END_SLIDER is not None:
+        components.append(trim_frame_module.TRIM_FRAME_END_SLIDER)
+    if trim_frame_module.TRIM_FRAME_ROW is not None:
+        components.append(trim_frame_module.TRIM_FRAME_ROW)
+    return components
+
+
+def build_target_preview_updates() -> Tuple:
+    """Load preview frame, scrubber, and trim controls for the current target_path."""
+    from facefusion.uis.components import trim_frame as trim_frame_module
+
+    target_path = state_manager.get_item('target_path')
+    if not target_path:
+        trim_updates = trim_frame_module.remote_update()
+        return (
+            gradio.update(value=0, maximum=0, visible=False),
+            gradio.update(visible=False),
+            gradio.update(value=None),
+            *trim_updates,
+        )
+
+    begin_programmatic_slider_update()
+    try:
+        frame_number = 0
+        if is_video(target_path):
+            frame_number = state_manager.get_item('reference_frame_number')
+            if frame_number is None:
+                frame_number = 0
+            else:
+                frame_number = int(frame_number)
+            total = count_video_frame_total(target_path)
+            if total > 0:
+                frame_number = max(0, min(frame_number, total - 1))
+            state_manager.set_item('reference_frame_number', frame_number)
+            slider_update = gradio.update(value=frame_number, maximum=total, visible=True)
+            row_update = gradio.update(visible=True)
+            preview = slide_preview_image(frame_number)
+        else:
+            state_manager.set_item('reference_frame_number', 0)
+            slider_update = gradio.update(value=0, maximum=0, visible=False)
+            row_update = gradio.update(visible=False)
+            preview = slide_preview_image(0)
+
+        trim_updates = trim_frame_module.remote_update()
+        return (slider_update, row_update, preview, *trim_updates)
+    finally:
+        end_programmatic_slider_update()
+
+
+def get_map_face_sync_output_components() -> List:
+    """Slider, preview, and detected-faces gallery (second step after instant preview)."""
+    from facefusion.uis.components import face_selector as face_selector_module
+
+    components: List = []
+    if PREVIEW_FRAME_SLIDER is not None:
+        components.append(PREVIEW_FRAME_SLIDER)
+    if PREVIEW_IMAGE is not None:
+        components.append(PREVIEW_IMAGE)
+    gallery = face_selector_module.get_detected_faces_gallery_component()
+    if gallery is not None:
+        components.append(gallery)
+    return components
+
+
+def refresh_map_face_sync() -> Tuple:
+    """Find a frame with faces, then update slider, raw preview, and face gallery."""
+    from facefusion.face_analyser import ensure_inference_pools_ready
+    from facefusion.uis.components import face_selector as face_selector_module
+
+    ensure_inference_pools_ready()
+    begin_programmatic_slider_update()
+    try:
+        target_path = state_manager.get_item('target_path')
+        if not target_path:
+            return (
+                gradio.update(),
+                slide_preview_image(0),
+                face_selector_module.refresh_detected_faces_gallery(),
+            )
+
+        if is_video(target_path):
+            frame_number = face_selector_module.resolve_preview_frame_number(target_path)
+            state_manager.set_item('reference_frame_number', frame_number)
+            total = count_video_frame_total(target_path)
+            slider_update = gradio.update(value=frame_number, maximum=total, visible=True)
+            preview_update = slide_preview_image(frame_number)
+        else:
+            state_manager.set_item('reference_frame_number', 0)
+            slider_update = gradio.update()
+            preview_update = slide_preview_image(0)
+
+        return (slider_update, preview_update, face_selector_module.refresh_detected_faces_gallery())
+    finally:
+        end_programmatic_slider_update()
+
+
+def refresh_target_preview() -> Tuple:
+    return build_target_preview_updates()
+
+
+def refresh_target_preview_with_faces() -> Tuple:
+    """Instant raw-frame preview + trim (Map tab open / target change). Face scan is separate."""
+    return build_target_preview_updates()
+
+
+def refresh_target_preview_and_mapping() -> Tuple:
+    """Preview + trim first, then detected-face gallery (needs reference_frame_number set)."""
+    from facefusion.uis.components import face_selector
+
+    return build_target_preview_updates() + face_selector.build_mapping_refresh_updates()
+
+
 def listen() -> None:
     mask_disable_button = get_ui_component('mask_disable_button')
     mask_enable_button = get_ui_component('mask_enable_button')
     mask_clear = get_ui_component('mask_clear_button')
     all_update_elements = [PREVIEW_IMAGE, mask_enable_button, mask_disable_button]
     more_elements = [PREVIEW_FRAME_SLIDER] + all_update_elements
-    PREVIEW_FRAME_BACK_BUTTON.click(preview_back, inputs=PREVIEW_FRAME_SLIDER, outputs=more_elements,
-                                    show_progress='hidden').then(update_preview_image, inputs=PREVIEW_FRAME_SLIDER,
-                                                                 outputs=all_update_elements, show_progress='hidden')
-    PREVIEW_FRAME_BACK_FIVE_BUTTON.click(preview_back_five, inputs=PREVIEW_FRAME_SLIDER, outputs=more_elements,
-                                         show_progress='hidden').then(update_preview_image, inputs=PREVIEW_FRAME_SLIDER,
-                                                                      outputs=all_update_elements,
-                                                                      show_progress='hidden')
-    PREVIEW_FRAME_FORWARD_BUTTON.click(preview_forward, inputs=PREVIEW_FRAME_SLIDER, outputs=more_elements,
-                                       show_progress='hidden').then(update_preview_image, inputs=PREVIEW_FRAME_SLIDER,
-                                                                    outputs=all_update_elements, show_progress='hidden')
-    PREVIEW_FRAME_FORWARD_FIVE_BUTTON.click(preview_forward_five, inputs=PREVIEW_FRAME_SLIDER, outputs=more_elements,
-                                            show_progress='hidden').then(update_preview_image,
-                                                                         inputs=PREVIEW_FRAME_SLIDER,
-                                                                         outputs=all_update_elements,
-                                                                         show_progress='hidden')
-    PREVIEW_FRAME_SLIDER.release(update_preview_image, inputs=PREVIEW_FRAME_SLIDER, outputs=all_update_elements,
-                                 show_progress='hidden')
+    # Modern Map layout: face_selector chains frame scrubber/nav to preview + detected faces.
+    modern_map_ui = get_ui_component('map_active_target_dropdown') is not None
+    if not modern_map_ui:
+        PREVIEW_FRAME_BACK_BUTTON.click(preview_back, inputs=PREVIEW_FRAME_SLIDER, outputs=more_elements,
+                                        show_progress='hidden').then(update_preview_image, inputs=PREVIEW_FRAME_SLIDER,
+                                                                     outputs=all_update_elements, show_progress='hidden')
+        PREVIEW_FRAME_BACK_FIVE_BUTTON.click(preview_back_five, inputs=PREVIEW_FRAME_SLIDER, outputs=more_elements,
+                                             show_progress='hidden').then(update_preview_image, inputs=PREVIEW_FRAME_SLIDER,
+                                                                          outputs=all_update_elements,
+                                                                          show_progress='hidden')
+        PREVIEW_FRAME_FORWARD_BUTTON.click(preview_forward, inputs=PREVIEW_FRAME_SLIDER, outputs=more_elements,
+                                           show_progress='hidden').then(update_preview_image, inputs=PREVIEW_FRAME_SLIDER,
+                                                                        outputs=all_update_elements, show_progress='hidden')
+        PREVIEW_FRAME_FORWARD_FIVE_BUTTON.click(preview_forward_five, inputs=PREVIEW_FRAME_SLIDER, outputs=more_elements,
+                                                show_progress='hidden').then(update_preview_image,
+                                                                             inputs=PREVIEW_FRAME_SLIDER,
+                                                                             outputs=all_update_elements,
+                                                                             show_progress='hidden')
+        PREVIEW_FRAME_SLIDER.release(update_preview_image, inputs=PREVIEW_FRAME_SLIDER, outputs=all_update_elements,
+                                     show_progress='hidden')
     # PREVIEW_FRAME_SLIDER.change(_preview_image, inputs=PREVIEW_FRAME_SLIDER, outputs=[PREVIEW_IMAGE],
     #                             show_progress='hidden')
     mask_disable_button.click(update_preview_image, inputs=PREVIEW_FRAME_SLIDER, outputs=all_update_elements,
@@ -211,6 +367,14 @@ def listen() -> None:
                 'face_editor_head_yaw_slider',
                 'face_editor_head_roll_slider',
                 'face_enhancer_blend_slider',
+                'background_remover_fill_color_red_number',
+                'background_remover_fill_color_green_number',
+                'background_remover_fill_color_blue_number',
+                'background_remover_fill_color_alpha_number',
+                'background_remover_despill_color_red_number',
+                'background_remover_despill_color_green_number',
+                'background_remover_despill_color_blue_number',
+                'background_remover_despill_color_alpha_number',
                 'frame_colorizer_blend_slider',
                 'frame_enhancer_blend_slider',
                 'reference_face_distance_slider',
@@ -222,8 +386,8 @@ def listen() -> None:
                 'face_mask_padding_right_slider',
                 'output_video_fps_slider'
             ]):
-        if ui_component:
-            ui_component.release(update_preview_image, inputs=PREVIEW_FRAME_SLIDER, outputs=all_update_elements)
+        bind_preview_on_value_change(
+            ui_component, update_preview_image, PREVIEW_FRAME_SLIDER, all_update_elements)
     for ui_component in get_ui_components(
             [
                 'age_modifier_model_dropdown',
@@ -233,6 +397,7 @@ def listen() -> None:
                 'face_enhancer_model_dropdown',
                 'face_swapper_model_dropdown',
                 'face_swapper_pixel_boost_dropdown',
+                'background_remover_model_dropdown',
                 'frame_colorizer_model_dropdown',
                 'frame_enhancer_model_dropdown',
                 'lip_syncer_model_dropdown',
@@ -254,7 +419,9 @@ def listen() -> None:
                 'face_detector_score_slider',
                 'face_landmarker_score_slider'
             ]):
-        ui_component.release(clear_and_update_preview_image, inputs=PREVIEW_FRAME_SLIDER, outputs=PREVIEW_IMAGE)
+        bind_preview_on_value_change(
+            ui_component, clear_and_update_preview_image, PREVIEW_FRAME_SLIDER, PREVIEW_IMAGE)
+
 
 
 def clear_and_update_preview_image(frame_number: int = 0) -> gradio.update:
@@ -267,12 +434,28 @@ def clear_and_update_preview_image(frame_number: int = 0) -> gradio.update:
 
 
 def slide_preview_image(frame_number: int = 0) -> gradio.update:
-    if is_video(state_manager.get_item('target_path')):
-        preview_vision_frame = normalize_frame_color(
-            get_video_frame(state_manager.get_item('target_path'), frame_number))
-        preview_vision_frame = resize_frame_resolution(preview_vision_frame, (1024, 1024))
-        return gradio.update(value=preview_vision_frame)
-    return gradio.update(value=None)
+    """Show the target frame immediately (no processor pipeline)."""
+    target_path = state_manager.get_item('target_path')
+    if not target_path:
+        return gradio.update()
+
+    if is_image(target_path):
+        target_frame = read_static_image(target_path)
+        if target_frame is not None:
+            return gradio.update(
+                value=normalize_frame_color(resize_frame_resolution(target_frame, (1024, 1024))),
+                visible=True,
+            )
+        return gradio.update()
+
+    if is_video(target_path):
+        preview_vision_frame = get_video_frame(target_path, int(frame_number))
+        if preview_vision_frame is not None:
+            preview_vision_frame = normalize_frame_color(
+                resize_frame_resolution(preview_vision_frame, (1024, 1024))
+            )
+            return gradio.update(value=preview_vision_frame, visible=True)
+    return gradio.update()
 
 
 def update_preview_image(frame_number: int = 0) -> Tuple[gradio.update, gradio.update, gradio.update]:

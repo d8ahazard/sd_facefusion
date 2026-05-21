@@ -143,6 +143,27 @@ def get_average_face(faces: List[Face]) -> Optional[Face]:
 vision_frame_cache = {}
 
 
+def clear_vision_frame_cache() -> None:
+    vision_frame_cache.clear()
+
+
+def ensure_inference_pools_ready() -> None:
+    """Warm up ONNX pools (detector, landmarker, face mask/occluder) before UI face work."""
+    if detector.inference_pool is None:
+        detector.set_inference_pool()
+    if landmarker.inference_pool is None:
+        landmarker.set_inference_pool()
+    try:
+        from facefusion.workers.classes.face_masker import FaceMasker
+        masker = FaceMasker()
+        if not masker.pre_check():
+            logger.warn('Face mask models are missing or failed validation', __name__)
+        elif masker.preload and masker.inference_pool is None:
+            masker.pre_load()
+    except Exception as exc:
+        logger.warn(f'Face mask model warmup skipped: {exc}', __name__)
+
+
 def get_frame_hash(vision_frame: VisionFrame) -> int:
     """
     Compute a unique hash for the VisionFrame using its contents.
@@ -204,28 +225,31 @@ def get_many_faces(vision_frames: List[VisionFrame], is_target_frame: bool = Fal
 
 def sync_source_frame_dict():
     """
-    Sync source_frame_dict with source_paths and source_paths_2.
-    Ensures that if only source_paths_2 is defined, it's properly mapped.
+    Sync source_frame_dict with source_paths and source_paths_2 (legacy keys).
+    Also mirrors indices 0/1 from source_frame_dict back to legacy keys when present.
     """
-    source_frame_dict = state_manager.get_item('source_frame_dict') or {}
+    source_frame_dict = dict(state_manager.get_item('source_frame_dict') or {})
     source_paths = state_manager.get_item('source_paths')
     source_paths_2 = state_manager.get_item('source_paths_2')
-    
+
     updated = False
-    
-    # Sync source_paths to index 0 if not already set
-    if source_paths and (0 not in source_frame_dict or source_frame_dict.get(0) != source_paths):
+
+    if source_paths and source_frame_dict.get(0) != source_paths:
         source_frame_dict[0] = source_paths
         updated = True
-    
-    # Sync source_paths_2 to index 1 if not already set
-    if source_paths_2 and (1 not in source_frame_dict or source_frame_dict.get(1) != source_paths_2):
+
+    if source_paths_2 and source_frame_dict.get(1) != source_paths_2:
         source_frame_dict[1] = source_paths_2
         updated = True
-    
+
+    if 0 in source_frame_dict and source_frame_dict[0] != source_paths:
+        state_manager.set_item('source_paths', source_frame_dict[0])
+    if 1 in source_frame_dict and source_frame_dict[1] != source_paths_2:
+        state_manager.set_item('source_paths_2', source_frame_dict[1])
+
     if updated:
         state_manager.set_item('source_frame_dict', source_frame_dict)
-    
+
     return source_frame_dict
 
 

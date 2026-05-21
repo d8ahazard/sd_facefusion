@@ -115,7 +115,10 @@ def conditional_process() -> ErrorCode:
                 if is_image(file_path):
                     logger.info(f"Processing image {file_path}", "CORE")
                     output_image_resolution = detect_image_resolution(state_manager.get_item('target_path'))
-                    state_manager.set_item('output_image_resolution', pack_resolution(output_image_resolution))
+                    from facefusion.vision import scale_resolution
+                    output_image_scale = state_manager.get_item('output_image_scale') or 1.0
+                    state_manager.set_item('output_image_resolution', pack_resolution(
+                        scale_resolution(output_image_resolution, output_image_scale)))
                     img_proc = process_image(start_time, True, reference_faces)
                     if not img_proc:
                         failed = True
@@ -126,7 +129,10 @@ def conditional_process() -> ErrorCode:
                     # This ensures each video uses its own resolution in batch processing
                     output_video_resolution = detect_video_resolution(file_path)
                     if output_video_resolution:
-                        state_manager.set_item('output_video_resolution', pack_resolution(output_video_resolution))
+                        from facefusion.vision import scale_resolution
+                        output_video_scale = state_manager.get_item('output_video_scale') or 1.0
+                        state_manager.set_item('output_video_resolution', pack_resolution(
+                            scale_resolution(output_video_resolution, output_video_scale)))
                     else:
                         logger.error(f"Failed to detect resolution for video {file_path}", "CORE")
                         failed = True
@@ -273,30 +279,23 @@ def route_job_runner() -> ErrorCode:
 
 
 def process_step(job_id: str, step_index: int, step_args: Args) -> bool:
-    # Save source paths
-    source_paths = state_manager.get_item('source_paths')
-    source_paths_2 = state_manager.get_item('source_paths_2')
-    source_frame_dict = state_manager.get_item('source_frame_dict')
-    
+    from facefusion.user_data import restore_session_settings, snapshot_session_settings
+
+    session_snapshot = snapshot_session_settings()
     clear_reference_faces()
     step_total = job_manager.count_step_total(job_id)
-    step_args.update(collect_job_args())
-    apply_args(step_args, True)
 
-    logger.info(wording.get('processing_step').format(step_current=step_index + 1, step_total=step_total), __name__)
-    if common_pre_check() and processors_pre_check():
-        error_code = conditional_process()
-        
-        # Restore source paths after processing
-        if source_paths:
-            state_manager.set_item('source_paths', source_paths)
-        if source_paths_2:
-            state_manager.set_item('source_paths_2', source_paths_2)
-        if source_frame_dict:
-            state_manager.set_item('source_frame_dict', source_frame_dict)
-            
-        return error_code == 0
-    return False
+    try:
+        step_args.update(collect_job_args())
+        apply_args(step_args, True)
+
+        logger.info(wording.get('processing_step').format(step_current=step_index + 1, step_total=step_total), __name__)
+        if common_pre_check() and processors_pre_check():
+            error_code = conditional_process()
+            return error_code == 0
+        return False
+    finally:
+        restore_session_settings(session_snapshot)
 
 
 def process_headless(args: Args) -> ErrorCode:
@@ -546,4 +545,5 @@ def is_process_stopping() -> bool:
     if process_manager.is_stopping():
         process_manager.end()
         logger.info(wording.get('processing_stopped'), __name__)
-    return process_manager.is_pending()
+        return True
+    return False

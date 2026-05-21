@@ -170,6 +170,11 @@ def normalize_resolution(resolution: Tuple[float, float]) -> Resolution:
     return 0, 0
 
 
+def scale_resolution(resolution: Resolution, scale: float) -> Resolution:
+    scaled = (int(resolution[0] * scale), int(resolution[1] * scale))
+    return normalize_resolution(scaled)
+
+
 def pack_resolution(resolution: Resolution) -> str:
     width, height = normalize_resolution(resolution)
     return str(width) + 'x' + str(height)

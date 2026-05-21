@@ -1,3 +1,4 @@
+import random
 from functools import lru_cache
 from time import sleep
 from typing import List
@@ -18,6 +19,14 @@ INFERENCE_POOLS: InferencePoolSet = \
     }
 
 
+def resolve_execution_device_ids() -> List[int]:
+    device_ids = state_manager.get_item('execution_device_ids')
+    if device_ids:
+        return [int(device_id) for device_id in device_ids]
+    device_id = state_manager.get_item('execution_device_id')
+    return [int(device_id or 0)]
+
+
 def get_inference_pool(model_context: str, model_sources: DownloadSet,
                        preferred_provider: str = "default") -> InferencePool:
     global INFERENCE_POOLS
@@ -26,21 +35,24 @@ def get_inference_pool(model_context: str, model_sources: DownloadSet,
         while process_manager.is_checking():
             sleep(0.5)
         app_context = detect_app_context()
-        inference_context = get_inference_context(model_context, preferred_provider)
-        requested_context = INFERENCE_POOLS.get(app_context).get(inference_context)
-        if app_context == 'cli' and INFERENCE_POOLS.get('ui').get(inference_context) and not requested_context:
-            INFERENCE_POOLS['cli'][inference_context] = INFERENCE_POOLS.get('ui').get(inference_context)
-        if app_context == 'ui' and INFERENCE_POOLS.get('cli').get(inference_context) and not requested_context:
-            INFERENCE_POOLS['ui'][inference_context] = INFERENCE_POOLS.get('cli').get(inference_context)
-        if not requested_context:
-            execution_provider_keys = resolve_execution_provider_keys(model_context, preferred_provider)
-            print(f"Creating inference pool for {model_context} with {execution_provider_keys}.")
-            INFERENCE_POOLS[app_context][inference_context] = create_inference_pool(model_sources,
-                                                                                    state_manager.get_item(
-                                                                                        'execution_device_id'),
-                                                                                    execution_provider_keys)
+        execution_provider_keys = resolve_execution_provider_keys(model_context, preferred_provider)
+        execution_device_ids = resolve_execution_device_ids()
 
-        return INFERENCE_POOLS.get(app_context).get(inference_context)
+        for execution_device_id in execution_device_ids:
+            inference_context = get_inference_context(model_context, preferred_provider, execution_device_id)
+            requested_context = INFERENCE_POOLS.get(app_context).get(inference_context)
+            if app_context == 'cli' and INFERENCE_POOLS.get('ui').get(inference_context) and not requested_context:
+                INFERENCE_POOLS['cli'][inference_context] = INFERENCE_POOLS.get('ui').get(inference_context)
+            if app_context == 'ui' and INFERENCE_POOLS.get('cli').get(inference_context) and not requested_context:
+                INFERENCE_POOLS['ui'][inference_context] = INFERENCE_POOLS.get('cli').get(inference_context)
+            if not requested_context:
+                print(f"Creating inference pool for {model_context} on device {execution_device_id} with {execution_provider_keys}.")
+                INFERENCE_POOLS[app_context][inference_context] = create_inference_pool(
+                    model_sources, str(execution_device_id), execution_provider_keys)
+
+        current_inference_context = get_inference_context(
+            model_context, preferred_provider, random.choice(execution_device_ids))
+        return INFERENCE_POOLS.get(app_context).get(current_inference_context)
 
 
 def create_inference_pool(model_sources: DownloadSet, execution_device_id: str,
@@ -86,7 +98,7 @@ def resolve_execution_provider_keys(model_context: str, preferred_provider: str 
     return state_manager.get_item('execution_providers')
 
 
-def get_inference_context(model_context: str, preferred_provider: str = "default") -> str:
+def get_inference_context(model_context: str, preferred_provider: str = "default",
+                          execution_device_id: int = 0) -> str:
     execution_provider_keys = resolve_execution_provider_keys(model_context, preferred_provider)
-    inference_context = model_context + '.' + '_'.join(execution_provider_keys)
-    return inference_context
+    return model_context + '.' + '_'.join(execution_provider_keys) + '.' + str(execution_device_id)

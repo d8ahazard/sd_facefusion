@@ -40,7 +40,7 @@
     width: calc(100% - 2.2em);
 }
 
-#ff3_add_reference_face_button, .remove_reference_faces_button {
+#ff3_add_reference_face_button:not(.ff-map-add-btn), .remove_reference_faces_button {
     flex: none;
     max-width: 2.2em;
     min-width: 2.2em !important;
@@ -95,4 +95,293 @@
     margin: 0;
     padding: 0;
     line-height: 1.2;
+}
+
+/* ============================================================
+   Media tab: source row — 3 columns
+     [name + thumb] [files 4 rows] [save/remove]
+   ============================================================ */
+.ff-src-row {
+    align-items: stretch !important;
+    gap: 0.6rem !important;
+    margin-bottom: 0.5rem !important;
+    padding: 0.6rem !important;
+    border: 1px solid var(--border-color-primary, #3a3a3a) !important;
+    border-radius: 0.5rem !important;
+    background: var(--block-background-fill, transparent) !important;
+}
+
+/* --- Col 1: name + thumb -------------------------- */
+.ff-src-meta {
+    flex: 0 0 130px !important;
+    width: 130px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    gap: 0.4rem !important;
+    padding: 0 !important;
+}
+
+.ff-src-name {
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+    border: none !important;
+}
+
+.ff-src-name input,
+.ff-src-name textarea {
+    text-align: center !important;
+    font-weight: 600 !important;
+    padding: 0.3rem 0.4rem !important;
+    min-height: 1.9rem !important;
+    line-height: 1.2 !important;
+}
+
+.ff-src-thumb {
+    width: 120px !important;
+    height: 120px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+.ff-src-thumb > .image-container,
+.ff-src-thumb .image-frame,
+.ff-src-thumb .image-container,
+.ff-src-thumb > div {
+    width: 120px !important;
+    height: 120px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+
+.ff-src-thumb img,
+.ff-src-thumb canvas {
+    width: 120px !important;
+    height: 120px !important;
+    object-fit: cover !important;
+    border-radius: 0.4rem !important;
+}
+
+/* --- Col 2: file picker, ~4 rows tall -------------- */
+.ff-src-files-col {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    padding: 0 !important;
+}
+
+.ff-src-files {
+    margin: 0 !important;
+    min-height: 11rem !important;
+    max-height: 11rem !important;
+}
+
+/* Cap the inner file list so it scrolls instead of pushing the row taller. */
+.ff-src-files .file-preview,
+.ff-src-files .file-preview-holder,
+.ff-src-files [data-testid="file"] {
+    max-height: 11rem !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+}
+
+/* Hide only the "Clear" / "Clear All" button. Keep upload/browse intact. */
+.ff-src-files button[aria-label="Clear"],
+.ff-src-files button[title="Clear"],
+.ff-src-files button[aria-label="Clear All"],
+.ff-src-files button[title="Clear All"] {
+    display: none !important;
+}
+
+/* --- Col 3: action buttons ------------------------ */
+.ff-src-actions {
+    flex: 0 0 92px !important;
+    width: 92px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+    gap: 0.5rem !important;
+    padding: 0 !important;
+}
+
+.ff-src-actions button {
+    width: 100% !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+}
+
+/* Map tab: preview capped height (portrait-friendly) */
+#ff_map_preview_image img,
+#ff_map_preview_image canvas {
+    max-height: 500px !important;
+    width: auto !important;
+    max-width: 100% !important;
+    height: auto !important;
+    object-fit: contain !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    display: block !important;
+    position: relative !important;
+    z-index: 2 !important;
+}
+
+/* Hide Gradio empty-state label overlay once a frame is loaded */
+#ff_map_preview_image .image-container:has(img) .wrap,
+#ff_map_preview_image .image-container:has(canvas) .wrap {
+    display: none !important;
+}
+
+/* Map tab: source picker + mapping rows */
+.ff-src-picker-col,
+.ff-map-mapping-row {
+    margin-bottom: 0.5rem !important;
+}
+
+.ff-map-button-row {
+    display: flex !important;
+    flex-direction: row !important;
+    justify-content: center !important;
+    align-items: center !important;
+    gap: 0.5rem !important;
+    margin-top: 0.35rem !important;
+    margin-bottom: 0.15rem !important;
+    width: 100% !important;
+}
+
+.ff-map-button-row button {
+    flex: 1 1 0 !important;
+    width: 50% !important;
+    min-width: 5.5rem !important;
+    margin: 0 !important;
+}
+
+.ff-map-process-row button {
+    flex: 1 1 0 !important;
+}
+
+button.ff-map-add-btn,
+.ff-map-add-btn {
+    border: 2px solid #f97316 !important;
+    box-shadow: none !important;
+}
+
+.ff-map-slot-name {
+    width: 100% !important;
+    margin: 0 0 0.15rem 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+}
+
+.ff-map-slot-name p {
+    margin: 0 !important;
+    font-size: 0.8rem !important;
+    font-weight: 600 !important;
+    line-height: 1.15 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+
+.ff-map-gallery-col {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+}
+
+/* One horizontal row of thumbnails (~same as legacy ff3 face galleries) */
+.ff-map-gallery,
+#ff_source_picker_gallery,
+#ff_reference_face_position_gallery,
+[id^="ff_reference_faces_selection_gallery"] {
+    width: 100% !important;
+    height: 90px !important;
+    min-height: 90px !important;
+    max-height: 90px !important;
+    margin: 0 !important;
+}
+
+.ff-map-gallery > .block,
+.ff-map-gallery > div,
+#ff_source_picker_gallery > .block,
+#ff_reference_face_position_gallery > .block,
+[id^="ff_reference_faces_selection_gallery"] > .block {
+    height: 90px !important;
+    min-height: 90px !important;
+    max-height: 90px !important;
+    overflow: hidden !important;
+}
+
+.ff-map-gallery .grid-wrap,
+.ff-map-gallery .fixed-height,
+#ff_source_picker_gallery .grid-wrap,
+#ff_reference_face_position_gallery .grid-wrap,
+[id^="ff_reference_faces_selection_gallery"] .grid-wrap {
+    height: 90px !important;
+    max-height: 90px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+}
+
+.ff-map-gallery .thumbnail-item,
+#ff_source_picker_gallery .thumbnail-item,
+#ff_reference_face_position_gallery .thumbnail-item,
+[id^="ff_reference_faces_selection_gallery"] .thumbnail-item {
+    height: 72px !important;
+    width: 72px !important;
+}
+
+/* Legacy elem ids (classic UI) */
+#ff3_reference_face_position_gallery,
+#ff3_reference_faces_selection_gallery,
+#ff3_reference_faces_selection_gallery_2 {
+    max-height: 90px !important;
+    height: 90px !important;
+}
+
+/* Queue tab */
+.ff-queue-actions {
+    gap: 0.35rem !important;
+    margin-bottom: 0.35rem !important;
+}
+
+.ff-queue-actions button {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+}
+
+.ff-queue-table {
+    max-height: 220px !important;
+    overflow-y: auto !important;
+}
+
+.ff-queue-table .table-wrap,
+.ff-queue-table .wrap {
+    max-height: 220px !important;
+    overflow-y: auto !important;
+}
+
+#ff_queue_status {
+    margin-top: 0.5rem !important;
+    margin-bottom: 0.5rem !important;
+}
+
+.ff-queue-mapping-gallery {
+    margin-bottom: 0.5rem !important;
+}
+
+.ff-src-file-list {
+    font-size: 0.8rem !important;
+    margin: 0.25rem 0 !important;
+}
+
+.ff-src-file-actions {
+    gap: 0.35rem !important;
+    align-items: center !important;
+}
+
+.ff-src-file-actions button {
+    min-width: 2rem !important;
 }

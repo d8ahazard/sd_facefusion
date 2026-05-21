@@ -7,7 +7,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Queue
 from typing import Any, List, Dict
 
-import facefusion.globals
 from facefusion import logger, wording, state_manager
 from facefusion.face_analyser import get_average_faces
 from facefusion.ff_status import FFStatus
@@ -50,7 +49,8 @@ def get_processors_modules(frame_processors: List[str] = None) -> List[BaseProce
     frame_processors = frame_processors or []
     processor_instances = {}
 
-    # Discover and load all processors
+    # Discover processors under processors/classes/ (extension layout).
+    # Upstream 3.6.x uses processors/modules/<name>/; new processors may be added here first.
     for loader, module_name, is_pkg in pkgutil.walk_packages(
             path=classes.__path__, prefix="facefusion.processors.classes."
     ):
@@ -113,27 +113,43 @@ def clear_processors_modules(processors: List[str]) -> None:
 def multi_process_frames(temp_frame_paths: List[str], process_frames: ProcessFrames) -> None:
     queue_payloads = create_queue_payloads(temp_frame_paths)
 
-    with tqdm(total=len(queue_payloads), desc=wording.get('processing'), unit='frame', ascii=' =',
-              disable=state_manager.get_item('log_level') in ['warn', 'error']) as progress:
+    status = FFStatus()
+    preview_stride = preview_frame_stride()
+    total_frames = len(queue_payloads)
+
+    with tqdm(
+        total=total_frames,
+        desc=wording.get('processing'),
+        unit='frame',
+        ascii=' =',
+        disable=state_manager.get_item('log_level') in ['warn', 'error'],
+        state=status,
+    ) as progress:
         progress.set_postfix(
             {
                 'execution_providers': state_manager.get_item('execution_providers'),
                 'execution_thread_count': state_manager.get_item('execution_thread_count'),
-                'execution_queue_count': state_manager.get_item('execution_queue_count')
-            })
-        status = FFStatus()
+                'execution_queue_count': state_manager.get_item('execution_queue_count'),
+            }
+        )
 
-        def update_progress(preview_image: str = None) -> None:
+        def update_progress(preview_image: str = None, frame_number: int = -1) -> None:
             progress.update()
-            status.step()  # Increment job_current for progress tracking
-            # Set preview directly if path provided - caller already gates by frame_number % 10
             if preview_image is not None:
                 status.preview_image = preview_image
+
+        def should_emit_preview(frame_number: int) -> bool:
+            if frame_number == 0:
+                return True
+            if frame_number % 10 == 0:
+                return True
+            if total_frames > 0 and frame_number >= total_frames - 1:
+                return True
+            return False
 
         with ThreadPoolExecutor(max_workers=state_manager.get_item('execution_thread_count')) as executor:
             futures = []
             queue: Queue[QueuePayload] = create_queue(queue_payloads)
-            # Use execution_queue_count to batch multiple frames per task (was hardcoded to 1)
             queue_count = state_manager.get_item('execution_queue_count') or 1
             while not queue.empty():
                 future = executor.submit(process_frames, pick_queue(queue, queue_count))
@@ -144,10 +160,10 @@ def multi_process_frames(temp_frame_paths: List[str], process_frames: ProcessFra
                     for result in results:
                         if isinstance(result, tuple):
                             frame_number, processed_path = result
-                            if frame_number % 10 == 0 or frame_number == status.job_total:
-                                update_progress(processed_path)
+                            if should_emit_preview(frame_number):
+                                update_progress(processed_path, frame_number)
                             else:
-                                update_progress()
+                                update_progress(frame_number=frame_number)
                         else:
                             print("Error: ", result)
 
@@ -177,8 +193,9 @@ def create_queue_payloads(temp_frame_paths: List[str]) -> List[QueuePayload]:
 
     queue_payloads = []
     source_faces = get_average_faces()
+    face_selector_mode = state_manager.get_item('face_selector_mode') or ''
     reference_faces = (
-        get_reference_faces() if 'reference' in facefusion.globals.face_selector_mode else (None, None))
+        get_reference_faces() if 'reference' in face_selector_mode else (None, None))
 
     temp_frame_paths = sorted(temp_frame_paths, key=os.path.basename)
     

@@ -2,10 +2,11 @@ import os
 from argparse import ArgumentParser
 from typing import List, Tuple
 
+import cv2
 import numpy
 
 from facefusion import config, inference_manager, process_manager, state_manager, wording
-from extensions.sd_facefusion.facefusion import logger
+from facefusion import logger
 from facefusion.common_helper import get_first
 from facefusion.execution import has_execution_provider
 from facefusion.face_analyser import get_many_faces, get_one_face, get_average_faces
@@ -87,8 +88,8 @@ class FaceSwapper(BaseProcessor):
                                 },
                             'embedding_converter':
                                 {
-                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/arcface_converter_ghost.hash',
-                                    'path': resolve_relative_path('../.assets/models/arcface_converter_ghost.hash')
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.4.0/crossface_ghost.hash',
+                                    'path': resolve_relative_path('../.assets/models/crossface_ghost.hash')
                                 }
                         },
                     'sources':
@@ -100,8 +101,8 @@ class FaceSwapper(BaseProcessor):
                                 },
                             'embedding_converter':
                                 {
-                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/arcface_converter_ghost.onnx',
-                                    'path': resolve_relative_path('../.assets/models/arcface_converter_ghost.onnx')
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.4.0/crossface_ghost.onnx',
+                                    'path': resolve_relative_path('../.assets/models/crossface_ghost.onnx')
                                 }
                         },
                     'type': 'ghost',
@@ -121,8 +122,8 @@ class FaceSwapper(BaseProcessor):
                                 },
                             'embedding_converter':
                                 {
-                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/arcface_converter_ghost.hash',
-                                    'path': resolve_relative_path('../.assets/models/arcface_converter_ghost.hash')
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.4.0/crossface_ghost.hash',
+                                    'path': resolve_relative_path('../.assets/models/crossface_ghost.hash')
                                 }
                         },
                     'sources':
@@ -134,8 +135,8 @@ class FaceSwapper(BaseProcessor):
                                 },
                             'embedding_converter':
                                 {
-                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/arcface_converter_ghost.onnx',
-                                    'path': resolve_relative_path('../.assets/models/arcface_converter_ghost.onnx')
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.4.0/crossface_ghost.onnx',
+                                    'path': resolve_relative_path('../.assets/models/crossface_ghost.onnx')
                                 }
                         },
                     'type': 'ghost',
@@ -155,8 +156,8 @@ class FaceSwapper(BaseProcessor):
                                 },
                             'embedding_converter':
                                 {
-                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/arcface_converter_ghost.hash',
-                                    'path': resolve_relative_path('../.assets/models/arcface_converter_ghost.hash')
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.4.0/crossface_ghost.hash',
+                                    'path': resolve_relative_path('../.assets/models/crossface_ghost.hash')
                                 }
                         },
                     'sources':
@@ -168,12 +169,118 @@ class FaceSwapper(BaseProcessor):
                                 },
                             'embedding_converter':
                                 {
-                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/arcface_converter_ghost.onnx',
-                                    'path': resolve_relative_path('../.assets/models/arcface_converter_ghost.onnx')
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.4.0/crossface_ghost.onnx',
+                                    'path': resolve_relative_path('../.assets/models/crossface_ghost.onnx')
                                 }
                         },
                     'type': 'ghost',
                     'template': 'arcface_112_v1',
+                    'size': (256, 256),
+                    'mean': [0.5, 0.5, 0.5],
+                    'standard_deviation': [0.5, 0.5, 0.5]
+                },
+            'hififace_unofficial_256':
+                {
+                    'hashes':
+                        {
+                            'face_swapper':
+                                {
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.1.0/hififace_unofficial_256.hash',
+                                    'path': resolve_relative_path('../.assets/models/hififace_unofficial_256.hash')
+                                },
+                            'embedding_converter':
+                                {
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.4.0/crossface_hififace.hash',
+                                    'path': resolve_relative_path('../.assets/models/crossface_hififace.hash')
+                                }
+                        },
+                    'sources':
+                        {
+                            'face_swapper':
+                                {
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.1.0/hififace_unofficial_256.onnx',
+                                    'path': resolve_relative_path('../.assets/models/hififace_unofficial_256.onnx')
+                                },
+                            'embedding_converter':
+                                {
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.4.0/crossface_hififace.onnx',
+                                    'path': resolve_relative_path('../.assets/models/crossface_hififace.onnx')
+                                }
+                        },
+                    'type': 'hififace',
+                    'template': 'mtcnn_512',
+                    'size': (256, 256),
+                    'mean': [0.5, 0.5, 0.5],
+                    'standard_deviation': [0.5, 0.5, 0.5]
+                },
+            'hyperswap_1a_256':
+                {
+                    'hashes':
+                        {
+                            'face_swapper':
+                                {
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.3.0/hyperswap_1a_256.hash',
+                                    'path': resolve_relative_path('../.assets/models/hyperswap_1a_256.hash')
+                                }
+                        },
+                    'sources':
+                        {
+                            'face_swapper':
+                                {
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.3.0/hyperswap_1a_256.onnx',
+                                    'path': resolve_relative_path('../.assets/models/hyperswap_1a_256.onnx')
+                                }
+                        },
+                    'type': 'hyperswap',
+                    'template': 'arcface_128',
+                    'size': (256, 256),
+                    'mean': [0.5, 0.5, 0.5],
+                    'standard_deviation': [0.5, 0.5, 0.5]
+                },
+            'hyperswap_1b_256':
+                {
+                    'hashes':
+                        {
+                            'face_swapper':
+                                {
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.3.0/hyperswap_1b_256.hash',
+                                    'path': resolve_relative_path('../.assets/models/hyperswap_1b_256.hash')
+                                }
+                        },
+                    'sources':
+                        {
+                            'face_swapper':
+                                {
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.3.0/hyperswap_1b_256.onnx',
+                                    'path': resolve_relative_path('../.assets/models/hyperswap_1b_256.onnx')
+                                }
+                        },
+                    'type': 'hyperswap',
+                    'template': 'arcface_128',
+                    'size': (256, 256),
+                    'mean': [0.5, 0.5, 0.5],
+                    'standard_deviation': [0.5, 0.5, 0.5]
+                },
+            'hyperswap_1c_256':
+                {
+                    'hashes':
+                        {
+                            'face_swapper':
+                                {
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.3.0/hyperswap_1c_256.hash',
+                                    'path': resolve_relative_path('../.assets/models/hyperswap_1c_256.hash')
+                                }
+                        },
+                    'sources':
+                        {
+                            'face_swapper':
+                                {
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.3.0/hyperswap_1c_256.onnx',
+                                    'path': resolve_relative_path('../.assets/models/hyperswap_1c_256.onnx')
+                                }
+                        },
+                    'type': 'hyperswap',
+                    'template': 'arcface_128',
                     'size': (256, 256),
                     'mean': [0.5, 0.5, 0.5],
                     'standard_deviation': [0.5, 0.5, 0.5]
@@ -237,8 +344,8 @@ class FaceSwapper(BaseProcessor):
                                 },
                             'embedding_converter':
                                 {
-                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/arcface_converter_simswap.hash',
-                                    'path': resolve_relative_path('../.assets/models/arcface_converter_simswap.hash')
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.4.0/crossface_simswap.hash',
+                                    'path': resolve_relative_path('../.assets/models/crossface_simswap.hash')
                                 }
                         },
                     'sources':
@@ -250,8 +357,8 @@ class FaceSwapper(BaseProcessor):
                                 },
                             'embedding_converter':
                                 {
-                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/arcface_converter_simswap.onnx',
-                                    'path': resolve_relative_path('../.assets/models/arcface_converter_simswap.onnx')
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.4.0/crossface_simswap.onnx',
+                                    'path': resolve_relative_path('../.assets/models/crossface_simswap.onnx')
                                 }
                         },
                     'type': 'simswap',
@@ -271,8 +378,8 @@ class FaceSwapper(BaseProcessor):
                                 },
                             'embedding_converter':
                                 {
-                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/arcface_converter_simswap.hash',
-                                    'path': resolve_relative_path('../.assets/models/arcface_converter_simswap.hash')
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.4.0/crossface_simswap.hash',
+                                    'path': resolve_relative_path('../.assets/models/crossface_simswap.hash')
                                 }
                         },
                     'sources':
@@ -284,8 +391,8 @@ class FaceSwapper(BaseProcessor):
                                 },
                             'embedding_converter':
                                 {
-                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/arcface_converter_simswap.onnx',
-                                    'path': resolve_relative_path('../.assets/models/arcface_converter_simswap.onnx')
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.4.0/crossface_simswap.onnx',
+                                    'path': resolve_relative_path('../.assets/models/crossface_simswap.onnx')
                                 }
                         },
                     'type': 'simswap',
@@ -336,7 +443,7 @@ class FaceSwapper(BaseProcessor):
         if group_processors:
             group_processors.add_argument('--face-swapper-model', help=wording.get('help.face_swapper_model'),
                                           default=config.get_str_value('processors.face_swapper_model',
-                                                                       'inswapper_128_fp16'),
+                                                                       'hyperswap_1a_256'),
                                           choices=self.list_models())
             face_swapper_pixel_boost_choices = suggest_face_swapper_pixel_boost_choices(program)
             group_processors.add_argument('--face-swapper-pixel-boost',
@@ -344,11 +451,18 @@ class FaceSwapper(BaseProcessor):
                                           default=config.get_str_value('processors.face_swapper_pixel_boost',
                                                                        get_first(face_swapper_pixel_boost_choices)),
                                           choices=face_swapper_pixel_boost_choices)
-            job_store.register_step_keys(['face_swapper_model', 'face_swapper_pixel_boost'])
+            from facefusion.processors import choices as processors_choices
+            group_processors.add_argument('--face-swapper-weight', help=wording.get('help.face_swapper_weight'),
+                                          type=float,
+                                          default=config.get_float_value('processors.face_swapper_weight', '0.5'),
+                                          choices=processors_choices.face_swapper_weight_range,
+                                          metavar='FACE_SWAPPER_WEIGHT')
+            job_store.register_step_keys(['face_swapper_model', 'face_swapper_pixel_boost', 'face_swapper_weight'])
 
     def apply_args(self, args: Args, apply_state_item: ApplyStateItem) -> None:
         apply_state_item('face_swapper_model', args.get('face_swapper_model'))
         apply_state_item('face_swapper_pixel_boost', args.get('face_swapper_pixel_boost'))
+        apply_state_item('face_swapper_weight', args.get('face_swapper_weight'))
 
     def pre_process(self, mode: ProcessMode) -> bool:
         self.src_cache = {}
@@ -402,14 +516,17 @@ class FaceSwapper(BaseProcessor):
         if cached_faces is not None:
             many_faces = cached_faces
         else:
-            many_faces = sort_and_filter_faces(get_many_faces([target_vision_frame], is_target_frame=True), vision_frame=target_vision_frame)
+            many_faces = sort_and_filter_faces(
+                get_many_faces([target_vision_frame], is_target_frame=True),
+                vision_frame=target_vision_frame,
+            )
         
         # Collect settings once per frame to avoid repeated state lookups
         auto_padding_model = state_manager.get_item('auto_padding_model')
-        padding = state_manager.get_item('face_mask_padding')
+        padding = state_manager.get_item('face_mask_padding') or (0, 0, 0, 0)
         
         if not auto_padding_model or auto_padding_model == "None":
-            padding = update_padding(padding, target_frame_number)
+            padding = update_padding(padding, target_frame_number) or (0, 0, 0, 0)
         else:
             padding = (0, 0, 0, 0)
         
@@ -417,22 +534,19 @@ class FaceSwapper(BaseProcessor):
         cached_settings = {
             'pixel_boost_size': unpack_resolution(state_manager.get_item('face_swapper_pixel_boost')),
             'face_mask_types': state_manager.get_item('face_mask_types') or [],
-            'face_mask_blur': state_manager.get_item('face_mask_blur'),
+            'face_mask_blur': state_manager.get_item('face_mask_blur') or 0.3,
             'face_mask_regions': state_manager.get_item('face_mask_regions'),
+            'face_mask_areas': state_manager.get_item('face_mask_areas'),
             'auto_padding_model': auto_padding_model,
         }
+
+        masker = FaceMasker()
         
         src_idx = 0
-        if face_selector_mode == 'many':
-            if many_faces:
-                for target_face in many_faces:
-                    target_vision_frame = self.swap_face(source_face, target_face, target_vision_frame, src_idx, target_frame_number, padding, cached_settings)
-            else:
-                print("No target face found")
         if face_selector_mode == 'one':
             target_face = get_one_face(many_faces)
             if target_face:
-                target_vision_frame = self.swap_face(source_face, target_face, target_vision_frame, src_idx, target_frame_number, padding, cached_settings)
+                target_vision_frame = self.swap_face(source_face, target_face, target_vision_frame, src_idx, target_frame_number, padding, cached_settings, masker)
             else:
                 logger.info("No target face found", __name__)
         if face_selector_mode == 'reference':
@@ -454,7 +568,7 @@ class FaceSwapper(BaseProcessor):
                 if similar_faces:
                     for similar_face in similar_faces:
                         target_vision_frame = self.swap_face(
-                            src_face, similar_face, target_vision_frame, src_face_idx, target_frame_number, padding, cached_settings
+                            src_face, similar_face, target_vision_frame, src_face_idx, target_frame_number, padding, cached_settings, masker
                         )
 
         return target_vision_frame
@@ -543,13 +657,14 @@ class FaceSwapper(BaseProcessor):
 
     def swap_face(self, source_face: Face, target_face: Face, temp_vision_frame: VisionFrame,
                   src_idx: int, target_frame_number: int, padding: Padding,
-                  cached_settings: dict = None) -> VisionFrame:
+                  cached_settings: dict = None, masker: 'FaceMasker' = None) -> VisionFrame:
         """
         Swap face with optional cached settings to avoid repeated state lookups.
-        cached_settings can contain: face_mask_types, face_mask_blur, face_mask_regions, 
+        cached_settings can contain: face_mask_types, face_mask_blur, face_mask_regions, face_mask_areas,
                                      auto_padding_model, pixel_boost_size
         """
-        masker = FaceMasker()
+        if masker is None:
+            masker = FaceMasker()
         model_options = self.get_cached_model_options()
         model_template = model_options.get('template')
         model_size = model_options.get('size')
@@ -558,16 +673,18 @@ class FaceSwapper(BaseProcessor):
         if cached_settings:
             pixel_boost_size = cached_settings.get('pixel_boost_size')
             face_mask_types = cached_settings.get('face_mask_types')
-            face_mask_blur = cached_settings.get('face_mask_blur')
+            face_mask_blur = cached_settings.get('face_mask_blur') or 0.3
             face_mask_regions = cached_settings.get('face_mask_regions')
+            face_mask_areas = cached_settings.get('face_mask_areas')
             auto_padding_model = cached_settings.get('auto_padding_model')
         else:
             pixel_boost_size = unpack_resolution(state_manager.get_item('face_swapper_pixel_boost'))
             face_mask_types = state_manager.get_item('face_mask_types')
-            face_mask_blur = state_manager.get_item('face_mask_blur')
+            face_mask_blur = state_manager.get_item('face_mask_blur') or 0.3
             face_mask_regions = state_manager.get_item('face_mask_regions')
+            face_mask_areas = state_manager.get_item('face_mask_areas')
             auto_padding_model = state_manager.get_item('auto_padding_model')
-        
+
         pixel_boost_total = pixel_boost_size[0] // model_size[0]
         crop_vision_frame, affine_matrix = warp_face_by_face_landmark_5(temp_vision_frame,
                                                                         target_face.landmark_set.get('5/68'),
@@ -577,10 +694,11 @@ class FaceSwapper(BaseProcessor):
 
         if 'box' in face_mask_types:
             if auto_padding_model and auto_padding_model != "None":
-                if hasattr(target_face, 'auto_padding_data') and target_face.auto_padding_data['padding_needed']:
-                    effective_padding = target_face.auto_padding_data['recommended_padding']
+                auto_data = getattr(target_face, 'auto_padding_data', None) or {}
+                if auto_data.get('padding_needed'):
+                    effective_padding = auto_data.get('recommended_padding') or padding
                 else:
-                    effective_padding = (0, 0, 0, 0)
+                    effective_padding = padding
             else:
                 effective_padding = padding
             
@@ -601,13 +719,28 @@ class FaceSwapper(BaseProcessor):
         # Run inference on each tile (cannot be batched due to model limitations)
         swapped_frames = []
         for prepared_frame in prepared_frames:
-            swapped_frame = self.forward_swap_face_cached(source_face, prepared_frame, src_idx, model_options)
+            swapped_frame = self.forward_swap_face_cached(source_face, target_face, prepared_frame, src_idx, model_options)
             swapped_frames.append(swapped_frame)
         
         # Batch normalize all results
         temp_vision_frames = self.batch_normalize_crop_frames(swapped_frames, model_options)
         
         crop_vision_frame = explode_pixel_boost(temp_vision_frames, pixel_boost_total, model_size, pixel_boost_size)
+
+        effective_face_mask_areas, apply_area_mask = masker.resolve_effective_face_mask_areas(
+            target_face, face_mask_areas, face_mask_types)
+        if apply_area_mask and effective_face_mask_areas:
+            face_landmark_68 = cv2.transform(
+                target_face.landmark_set.get('68').reshape(1, -1, 2), affine_matrix).reshape(-1, 2)
+            area_mask = masker.create_area_mask(crop_vision_frame, face_landmark_68, effective_face_mask_areas)
+            crop_masks.append(area_mask)
+
+        exclude_areas, apply_exclude = masker.resolve_auto_exclude_face_mask_areas(target_face)
+        if apply_exclude and exclude_areas:
+            face_landmark_68 = cv2.transform(
+                target_face.landmark_set.get('68').reshape(1, -1, 2), affine_matrix).reshape(-1, 2)
+            exclude_mask = masker.create_area_mask(crop_vision_frame, face_landmark_68, exclude_areas)
+            crop_masks.append(1.0 - exclude_mask)
 
         if 'region' in face_mask_types:
             region_mask = masker.create_region_mask(crop_vision_frame, face_mask_regions)
@@ -617,10 +750,10 @@ class FaceSwapper(BaseProcessor):
         temp_vision_frame = paste_back(temp_vision_frame, crop_vision_frame, crop_mask, affine_matrix)
         return temp_vision_frame
 
-    def forward_swap_face(self, source_face: Face, crop_vision_frame: VisionFrame, src_idx: int) -> VisionFrame:
-        return self.forward_swap_face_cached(source_face, crop_vision_frame, src_idx, self.get_cached_model_options())
-    
-    def forward_swap_face_cached(self, source_face: Face, crop_vision_frame: VisionFrame, src_idx: int, model_options: ModelOptions) -> VisionFrame:
+    def forward_swap_face(self, source_face: Face, target_face: Face, crop_vision_frame: VisionFrame, src_idx: int) -> VisionFrame:
+        return self.forward_swap_face_cached(source_face, target_face, crop_vision_frame, src_idx, self.get_cached_model_options())
+
+    def forward_swap_face_cached(self, source_face: Face, target_face: Face, crop_vision_frame: VisionFrame, src_idx: int, model_options: ModelOptions) -> VisionFrame:
         """Forward swap with cached model options to avoid repeated lookups"""
         face_swapper = self.get_inference_pool().get('face_swapper')
         model_type = model_options.get('type')
@@ -631,7 +764,8 @@ class FaceSwapper(BaseProcessor):
             if model_type == 'blendswap' or model_type == 'uniface':
                 face_swapper_inputs['source'] = self.prepare_source_frame(source_face, src_idx)
             else:
-                face_swapper_inputs['source'] = self.prepare_source_embedding(source_face, src_idx)
+                source_embedding = self.prepare_source_embedding(source_face, src_idx)
+                face_swapper_inputs['source'] = self.balance_source_embedding(source_embedding, target_face.embedding, model_type)
         if 'target' in input_names:
             face_swapper_inputs['target'] = crop_vision_frame
 
@@ -681,6 +815,8 @@ class FaceSwapper(BaseProcessor):
         if model_type == 'ghost':
             source_embedding, _ = self.convert_embedding(source_face)
             source_embedding = source_embedding.reshape(1, -1)
+        elif model_type == 'hyperswap':
+            source_embedding = source_face.normed_embedding.reshape((1, -1))
         elif model_type == 'inswapper':
             model_path = self.get_model_options().get('sources').get('face_swapper').get('path')
             model_initializer = get_static_model_initializer(model_path)
@@ -690,6 +826,20 @@ class FaceSwapper(BaseProcessor):
             _, source_normed_embedding = self.convert_embedding(source_face)
             source_embedding = source_normed_embedding.reshape(1, -1)
         self.src_cache[src_idx] = source_embedding
+        return source_embedding
+
+    def balance_source_embedding(self, source_embedding: Embedding, target_embedding: Embedding, model_type: str) -> Embedding:
+        face_swapper_weight = state_manager.get_item('face_swapper_weight')
+        if face_swapper_weight is None:
+            face_swapper_weight = 0.5
+        face_swapper_weight = numpy.interp(face_swapper_weight, [0, 1], [0.35, -0.35]).astype(numpy.float32)
+
+        if model_type in ['hififace', 'hyperswap', 'inswapper', 'simswap']:
+            target_embedding = target_embedding / numpy.linalg.norm(target_embedding)
+
+        source_embedding = source_embedding.reshape(1, -1)
+        target_embedding = target_embedding.reshape(1, -1)
+        source_embedding = source_embedding * (1 - face_swapper_weight) + target_embedding * face_swapper_weight
         return source_embedding
 
     def convert_embedding(self, source_face: Face) -> Tuple[Embedding, Embedding]:
@@ -726,7 +876,7 @@ class FaceSwapper(BaseProcessor):
     
     def batch_prepare_crop_frames(self, crop_frames: List[VisionFrame], model_options: ModelOptions) -> List[VisionFrame]:
         """Batch prepare multiple crop frames with vectorized operations"""
-        if not crop_frames:
+        if len(crop_frames) == 0:
             return []
         
         model_mean = numpy.array(model_options.get('mean'), dtype=numpy.float32)
@@ -755,7 +905,7 @@ class FaceSwapper(BaseProcessor):
         model_standard_deviation = model_options.get('standard_deviation')
 
         crop_vision_frame = crop_vision_frame.transpose(1, 2, 0)
-        if model_type == 'ghost' or model_type == 'uniface':
+        if model_type in ['ghost', 'hififace', 'hyperswap', 'uniface']:
             crop_vision_frame = crop_vision_frame * model_standard_deviation + model_mean
         crop_vision_frame = crop_vision_frame.clip(0, 1)
         crop_vision_frame = crop_vision_frame[:, :, ::-1] * 255
@@ -763,7 +913,7 @@ class FaceSwapper(BaseProcessor):
     
     def batch_normalize_crop_frames(self, crop_frames: List[VisionFrame], model_options: ModelOptions) -> List[VisionFrame]:
         """Batch normalize multiple crop frames with vectorized operations"""
-        if not crop_frames:
+        if len(crop_frames) == 0:
             return []
         
         model_type = model_options.get('type')
@@ -777,7 +927,7 @@ class FaceSwapper(BaseProcessor):
         stacked = stacked.transpose(0, 2, 3, 1)
         
         # Denormalize for ghost/uniface models
-        if model_type in ('ghost', 'uniface'):
+        if model_type in ('ghost', 'hififace', 'hyperswap', 'uniface'):
             stacked = stacked * model_std + model_mean
         
         # Clip and convert RGB -> BGR, scale to 255

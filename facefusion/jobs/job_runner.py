@@ -4,6 +4,7 @@ import os
 from facefusion.ffmpeg import concat_video
 from facefusion.filesystem import is_image, move_file, remove_file, is_video
 from facefusion.jobs import job_helper, job_manager
+from facefusion.target_registry import repair_missing_target_path
 from facefusion.typing import JobOutputSet, JobStep, ProcessStep
 
 
@@ -78,9 +79,28 @@ def retry_jobs(process_step: ProcessStep) -> bool:
     return False
 
 
+def _ensure_step_target(job_id: str, step_index: int, step_args: dict) -> bool:
+    target_path = step_args.get('target_path')
+    repaired = repair_missing_target_path(target_path)
+    if not repaired:
+        print(f'[FaceFusion] Target missing and could not be restored: {target_path}', flush=True)
+        return False
+    if repaired != target_path:
+        step_args['target_path'] = repaired
+        job = job_manager.read_job_file(job_id)
+        if job and job_manager.has_step(job_id, step_index):
+            job['steps'][step_index]['args']['target_path'] = repaired
+            job_manager.update_job_file(job_id, job)
+        print(f'[FaceFusion] Restored missing target from temp copy: {repaired}', flush=True)
+    return True
+
+
 def run_step(job_id: str, step_index: int, step: JobStep, process_step: ProcessStep) -> bool:
     step_args = step.get('args')
     output_path = step_args.get('output_path')
+    if not _ensure_step_target(job_id, step_index, step_args):
+        job_manager.set_step_status(job_id, step_index, 'failed')
+        return False
     if job_manager.set_step_status(job_id, step_index, 'started') and process_step(job_id, step_index, step_args):
         if not os.path.exists(output_path):
             os.makedirs(output_path, exist_ok=True)

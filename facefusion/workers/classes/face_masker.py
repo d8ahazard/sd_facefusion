@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 import traceback
-from typing import Dict, List, Tuple, Generic, Optional, TypeVar
+from typing import Dict, List, Set, Tuple, Generic, Optional, TypeVar
 
 import cv2
 import numpy
@@ -15,10 +15,11 @@ from rich import print  # noqa: A004  Shadowing built-in 'print'
 from torchvision.transforms.functional import to_pil_image
 from ultralytics import YOLO, YOLOWorld
 
+import facefusion.choices
 from facefusion import state_manager, process_manager
 from facefusion.filesystem import resolve_relative_path
 from facefusion.thread_helper import conditional_thread_semaphore
-from facefusion.typing import DownloadSet, FaceLandmark68, FaceMaskRegion, Mask, ModelSet, Padding, \
+from facefusion.typing import DownloadSet, FaceLandmark68, FaceMaskArea, FaceMaskRegion, InferencePool, Mask, ModelSet, Padding, \
     VisionFrame
 from facefusion.workers.base_worker import BaseWorker
 from modules.paths_internal import models_path
@@ -31,12 +32,82 @@ logger = logging.getLogger(__name__)
 YOLO_MODEL_CACHE = {}
 
 
+# YOLO class name hints that usually overlap the mouth / lower face (COCO + common custom labels).
+_MOUTH_OBJECT_CLASS_KEYWORDS = (
+    'cup', 'bottle', 'wine', 'glass', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
+    'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake',
+    'ice cream', 'icecream', 'food', 'eating', 'cell phone', 'phone', 'microphone', 'mic',
+    'cigarette', 'vape', 'toothbrush', 'lollipop', 'candy', 'drink', 'straw',
+)
+
+
 @dataclass
 class PredictOutput(Generic[T]):
     bboxes: list[list[T]] = field(default_factory=list)
     masks: list[Image.Image] = field(default_factory=list)
     confidences: list[float] = field(default_factory=list)
+    class_names: list[str] = field(default_factory=list)
     preview: Optional[Image.Image] = None
+
+
+def infer_mask_areas_for_object(face_bbox: List[float], obj_bbox: List[float],
+                                class_name: Optional[str] = None) -> List[FaceMaskArea]:
+    """Map a nearby object bbox to face mask areas using vertical position on the face."""
+    areas: Set[FaceMaskArea] = set()
+    face_x1, face_y1, face_x2, face_y2 = face_bbox
+    obj_x1, obj_y1, obj_x2, obj_y2 = obj_bbox
+    obj_cy = (obj_y1 + obj_y2) / 2
+    face_h = max(face_y2 - face_y1, 1)
+    rel_y = (obj_cy - face_y1) / face_h
+
+    if rel_y < 0.4:
+        areas.add('upper-face')
+    if rel_y > 0.35:
+        areas.add('lower-face')
+    if rel_y > 0.5:
+        areas.add('mouth')
+
+    mouth_line = face_y1 + 0.52 * face_h
+    if obj_y2 > mouth_line or obj_cy > mouth_line:
+        areas.add('mouth')
+        areas.add('lower-face')
+
+    if class_name:
+        class_label = class_name.lower().replace('_', ' ')
+        if any(keyword in class_label for keyword in _MOUTH_OBJECT_CLASS_KEYWORDS):
+            areas.add('mouth')
+            areas.add('lower-face')
+
+    return list(areas)
+
+
+def compute_object_aware_padding(face_bbox: List[float], intersecting_objects: List[dict],
+                                 base_padding: Padding) -> Padding:
+    """Increase box-mask inset on sides where nearby objects sit (shrinks swap away from them)."""
+    top, right, bottom, left = [int(p) for p in base_padding]
+    face_x1, face_y1, face_x2, face_y2 = face_bbox
+    face_w = max(face_x2 - face_x1, 1.0)
+    face_h = max(face_y2 - face_y1, 1.0)
+    pad_boost = 12
+
+    for obj in intersecting_objects:
+        obj_x1, obj_y1, obj_x2, obj_y2 = obj['bbox']
+        obj_cx = (obj_x1 + obj_x2) / 2
+        obj_cy = (obj_y1 + obj_y2) / 2
+        rel_x = (obj_cx - face_x1) / face_w
+        rel_y = (obj_cy - face_y1) / face_h
+
+        if rel_y < 0.42:
+            top = max(top, pad_boost)
+        if rel_y > 0.58:
+            extra = int(min(35, max(0.0, (obj_y2 - face_y1) / face_h - 0.45) * 80))
+            bottom = max(bottom, pad_boost + extra)
+        if rel_x < 0.38:
+            left = max(left, pad_boost)
+        if rel_x > 0.62:
+            right = max(right, pad_boost)
+
+    return (top, right, bottom, left)
 
 
 def create_mask_from_bbox(
@@ -140,12 +211,17 @@ def ultralytics_predict(
 
         confidences = pred[0].boxes.conf.cpu().numpy().tolist()
 
+        class_names: list[str] = []
+        if pred[0].boxes.cls is not None and getattr(model, 'names', None):
+            for class_id in pred[0].boxes.cls.cpu().numpy().tolist():
+                class_names.append(model.names.get(int(class_id), str(int(class_id))))
+
         preview = pred[0].plot()
         preview = cv2.cvtColor(preview, cv2.COLOR_BGR2RGB)
         preview = Image.fromarray(preview)
 
         return PredictOutput(
-            bboxes=bboxes, masks=masks, confidences=confidences, preview=preview
+            bboxes=bboxes, masks=masks, confidences=confidences, class_names=class_names, preview=preview
         )
     finally:
         # Always restore original logging level
@@ -177,6 +253,66 @@ def mask_to_pil(masks: torch.Tensor, shape: tuple[int, int]) -> list[Image.Image
 class FaceMasker(BaseWorker):
     MODEL_SET: ModelSet = \
         {
+            'xseg_1':
+                {
+                    'hashes':
+                        {
+                            'face_occluder':
+                                {
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.1.0/xseg_1.hash',
+                                    'path': resolve_relative_path('../.assets/models/xseg_1.hash')
+                                }
+                        },
+                    'sources':
+                        {
+                            'face_occluder':
+                                {
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.1.0/xseg_1.onnx',
+                                    'path': resolve_relative_path('../.assets/models/xseg_1.onnx')
+                                }
+                        },
+                    'size': (256, 256)
+                },
+            'xseg_2':
+                {
+                    'hashes':
+                        {
+                            'face_occluder':
+                                {
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.1.0/xseg_2.hash',
+                                    'path': resolve_relative_path('../.assets/models/xseg_2.hash')
+                                }
+                        },
+                    'sources':
+                        {
+                            'face_occluder':
+                                {
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.1.0/xseg_2.onnx',
+                                    'path': resolve_relative_path('../.assets/models/xseg_2.onnx')
+                                }
+                        },
+                    'size': (256, 256)
+                },
+            'xseg_3':
+                {
+                    'hashes':
+                        {
+                            'face_occluder':
+                                {
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.2.0/xseg_3.hash',
+                                    'path': resolve_relative_path('../.assets/models/xseg_3.hash')
+                                }
+                        },
+                    'sources':
+                        {
+                            'face_occluder':
+                                {
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.2.0/xseg_3.onnx',
+                                    'path': resolve_relative_path('../.assets/models/xseg_3.onnx')
+                                }
+                        },
+                    'size': (256, 256)
+                },
             'face_occluder':
                 {
                     'hashes':
@@ -239,20 +375,31 @@ class FaceMasker(BaseWorker):
     preferred_provider = 'cuda'
 
     def collect_model_downloads(self) -> Tuple[DownloadSet, DownloadSet]:
-        model_hashes = \
-            {
-                'face_occluder': self.MODEL_SET.get('face_occluder').get('hashes').get('face_occluder'),
-                'face_parser': self.MODEL_SET.get('face_parser').get('hashes').get('face_parser')
-            }
-        model_sources = \
-            {
-                'face_occluder': self.MODEL_SET.get('face_occluder').get('sources').get('face_occluder'),
-                'face_parser': self.MODEL_SET.get('face_parser').get('sources').get('face_parser')
-            }
+        model_hashes: DownloadSet = {}
+        model_sources: DownloadSet = {}
+        face_occluder_model = state_manager.get_item('face_occluder_model') or 'xseg_3'
+
+        for occluder_name in ['xseg_1', 'xseg_2', 'xseg_3']:
+            if face_occluder_model in ['many', occluder_name]:
+                model_hashes[occluder_name] = self.MODEL_SET.get(occluder_name).get('hashes').get('face_occluder')
+                model_sources[occluder_name] = self.MODEL_SET.get(occluder_name).get('sources').get('face_occluder')
+
+        if face_occluder_model == 'face_occluder':
+            model_hashes['face_occluder'] = self.MODEL_SET.get('face_occluder').get('hashes').get('face_occluder')
+            model_sources['face_occluder'] = self.MODEL_SET.get('face_occluder').get('sources').get('face_occluder')
+
+        model_hashes['face_parser'] = self.MODEL_SET.get('face_parser').get('hashes').get('face_parser')
+        model_sources['face_parser'] = self.MODEL_SET.get('face_parser').get('sources').get('face_parser')
         return model_hashes, model_sources
 
     @lru_cache(maxsize=None)
     def create_static_box_mask(self, crop_size: Size, face_mask_blur: float, face_mask_padding: Padding) -> Mask:
+        if face_mask_blur is None:
+            face_mask_blur = 0.3
+        if not face_mask_padding:
+            face_mask_padding = (0, 0, 0, 0)
+        else:
+            face_mask_padding = tuple(int(p or 0) for p in face_mask_padding)
         blur_amount = int(crop_size[0] * 0.5 * face_mask_blur)
         blur_area = max(blur_amount // 2, 1)
         box_mask: Mask = numpy.ones(crop_size).astype(numpy.float32)
@@ -265,15 +412,76 @@ class FaceMasker(BaseWorker):
         return box_mask
 
     def create_occlusion_mask(self, crop_vision_frame: VisionFrame) -> Mask:
-        model_size = self.MODEL_SET.get('face_occluder').get('size')
-        prepare_vision_frame = cv2.resize(crop_vision_frame, model_size)
-        prepare_vision_frame = numpy.expand_dims(prepare_vision_frame, axis=0).astype(numpy.float32) / 255
-        prepare_vision_frame = prepare_vision_frame.transpose(0, 1, 2, 3)
-        occlusion_mask = self.forward_occlude_face(prepare_vision_frame)
-        occlusion_mask = occlusion_mask.transpose(0, 1, 2).clip(0, 1).astype(numpy.float32)
-        occlusion_mask = cv2.resize(occlusion_mask, crop_vision_frame.shape[:2][::-1])
+        face_occluder_model = state_manager.get_item('face_occluder_model') or 'xseg_3'
+        if face_occluder_model == 'many':
+            model_names = ['xseg_1', 'xseg_2', 'xseg_3']
+        elif face_occluder_model in self.MODEL_SET:
+            model_names = [face_occluder_model]
+        else:
+            model_names = ['xseg_3']
+
+        temp_masks = []
+        for model_name in model_names:
+            model_size = self.MODEL_SET.get(model_name).get('size')
+            prepare_vision_frame = cv2.resize(crop_vision_frame, model_size)
+            prepare_vision_frame = numpy.expand_dims(prepare_vision_frame, axis=0).astype(numpy.float32) / 255
+            prepare_vision_frame = prepare_vision_frame.transpose(0, 1, 2, 3)
+            temp_mask = self.forward_occlude_face(prepare_vision_frame, model_name)
+            temp_mask = temp_mask.transpose(0, 1, 2).clip(0, 1).astype(numpy.float32)
+            temp_mask = cv2.resize(temp_mask, crop_vision_frame.shape[:2][::-1])
+            temp_masks.append(temp_mask)
+
+        occlusion_mask = numpy.minimum.reduce(temp_masks)
         occlusion_mask = (cv2.GaussianBlur(occlusion_mask.clip(0, 1), (0, 0), 5).clip(0.5, 1) - 0.5) * 2
         return occlusion_mask
+
+    @staticmethod
+    def resolve_auto_exclude_face_mask_areas(face) -> Tuple[List[FaceMaskArea], bool]:
+        """
+        YOLO auto-padding: regions to *exclude* from the swap (keep original pixels), not include.
+        """
+        auto_padding_model = state_manager.get_item('auto_padding_model')
+        auto_data = getattr(face, 'auto_padding_data', None) or {}
+        if (
+            auto_padding_model
+            and auto_padding_model != 'None'
+            and auto_data.get('area_mask_needed')
+            and auto_data.get('recommended_mask_areas')
+        ):
+            from facefusion.choices import normalize_face_mask_areas
+            areas = normalize_face_mask_areas(auto_data['recommended_mask_areas'])
+            if areas:
+                return areas, True
+        return [], False
+
+    @staticmethod
+    def resolve_effective_face_mask_areas(face, user_areas: Optional[List[FaceMaskArea]],
+                                          face_mask_types: Optional[List[str]]) -> Tuple[List[FaceMaskArea], bool]:
+        """
+        Manual face-mask type 'area': limit swap to selected landmark regions (upstream behavior).
+        YOLO auto regions are handled separately via resolve_auto_exclude_face_mask_areas.
+        """
+        face_mask_types = face_mask_types or []
+        from facefusion.choices import resolve_face_mask_areas
+        manual_areas = resolve_face_mask_areas(user_areas)
+        if 'area' in face_mask_types and manual_areas:
+            return manual_areas, True
+        return [], False
+
+    def create_area_mask(self, crop_vision_frame: VisionFrame, face_landmark_68: FaceLandmark68,
+                         face_mask_areas: List[FaceMaskArea]) -> Mask:
+        crop_size = crop_vision_frame.shape[:2][::-1]
+        landmark_points = []
+
+        for face_mask_area in face_mask_areas:
+            if face_mask_area in facefusion.choices.face_mask_area_set:
+                landmark_points.extend(facefusion.choices.face_mask_area_set.get(face_mask_area))
+
+        convex_hull = cv2.convexHull(face_landmark_68[landmark_points].astype(numpy.int32))
+        area_mask = numpy.zeros(crop_size).astype(numpy.float32)
+        cv2.fillConvexPoly(area_mask, convex_hull, 1.0)  # type:ignore[call-overload]
+        area_mask = (cv2.GaussianBlur(area_mask.clip(0, 1), (0, 0), 5).clip(0.5, 1) - 0.5) * 2
+        return area_mask
 
     def create_region_mask(self, crop_vision_frame: VisionFrame, face_mask_regions: List[FaceMaskRegion]) -> Mask:
         model_size = self.MODEL_SET.get('face_parser').get('size')
@@ -372,6 +580,7 @@ class FaceMasker(BaseWorker):
             # Filter detections by user confidence threshold
             filtered_bboxes = []
             filtered_confidences = []
+            filtered_class_names = []
             rejected_count = 0
             
             for i, bbox in enumerate(result.bboxes):
@@ -379,6 +588,10 @@ class FaceMasker(BaseWorker):
                 if obj_confidence >= confidence:
                     filtered_bboxes.append(bbox)
                     filtered_confidences.append(obj_confidence)
+                    if i < len(result.class_names):
+                        filtered_class_names.append(result.class_names[i])
+                    else:
+                        filtered_class_names.append(None)
                 else:
                     rejected_count += 1
                     
@@ -393,6 +606,7 @@ class FaceMasker(BaseWorker):
             # Update result with filtered data
             result.bboxes = filtered_bboxes
             result.confidences = filtered_confidences
+            result.class_names = filtered_class_names
 
             # Analyze intersections with faces
             face_intersections = {}
@@ -412,7 +626,11 @@ class FaceMasker(BaseWorker):
                 intersecting_objects = []
                 has_intersection = False
                 padding_needed = False
-                
+                recommended_mask_areas: Set[FaceMaskArea] = set()
+                from facefusion.choices import auto_padding_mask_areas_for_runtime
+                allowed_auto_areas = auto_padding_mask_areas_for_runtime(
+                    state_manager.get_item('auto_padding_mask_areas'))
+
                 for obj_idx, obj_bbox in enumerate(result.bboxes):
                     obj_x1, obj_y1, obj_x2, obj_y2 = obj_bbox
                     obj_center_x = (obj_x1 + obj_x2) / 2
@@ -429,6 +647,7 @@ class FaceMasker(BaseWorker):
                     is_close = distance < intersection_threshold
                     
                     obj_confidence = result.confidences[obj_idx] if obj_idx < len(result.confidences) else 0.0
+                    class_name = result.class_names[obj_idx] if obj_idx < len(result.class_names) else None
                     
                     # Detailed logging disabled during batch/silent mode to prevent spam
                     # if not is_batch_processing:
@@ -443,28 +662,36 @@ class FaceMasker(BaseWorker):
                         obj_info = {
                             'bbox': obj_bbox,
                             'confidence': obj_confidence,
+                            'class_name': class_name,
                             'distance_to_face': distance,
                             'intersects': intersects,
-                            'is_close': is_close
+                            'is_close': is_close,
+                            'mask_areas': infer_mask_areas_for_object(face_bbox, obj_bbox, class_name),
                         }
                         intersecting_objects.append(obj_info)
+                        for mask_area in obj_info['mask_areas']:
+                            if mask_area in allowed_auto_areas:
+                                recommended_mask_areas.add(mask_area)
                         # if not is_batch_processing:
                         #     logger.info(f"  → ACCEPTED: Object will trigger auto-padding")
                     # else:
                     #     if not is_batch_processing:
                     #         logger.info(f"  → REJECTED: Object too far (distance={distance:.1f}px > threshold={intersection_threshold}px) and no intersection")
                 
-                # Calculate recommended padding based on object positions
                 recommended_padding = (0, 0, 0, 0)  # top, right, bottom, left
-                if padding_needed:
-                    # Calculate padding to avoid intersecting objects
-                    recommended_padding = state_manager.get_item('face_mask_padding') or (0, 0, 0, 0)
+                if padding_needed and intersecting_objects:
+                    base_padding = state_manager.get_item('face_mask_padding') or (0, 0, 0, 0)
+                    recommended_padding = compute_object_aware_padding(
+                        face_bbox, intersecting_objects, base_padding)
                 
+                area_mask_needed = bool(recommended_mask_areas)
                 face_intersections[face_idx] = {
                     'has_intersection': has_intersection,
                     'objects_detected': intersecting_objects,
                     'padding_needed': padding_needed,
-                    'recommended_padding': recommended_padding
+                    'recommended_padding': recommended_padding,
+                    'area_mask_needed': area_mask_needed,
+                    'recommended_mask_areas': list(recommended_mask_areas),
                 }
             
             return face_intersections
@@ -539,8 +766,8 @@ class FaceMasker(BaseWorker):
         mouth_mask = cv2.GaussianBlur(mouth_mask, (0, 0), sigmaX=1, sigmaY=15)
         return mouth_mask
 
-    def forward_occlude_face(self, prepare_vision_frame: VisionFrame) -> Mask:
-        face_occluder = self.get_inference_pool().get('face_occluder')
+    def forward_occlude_face(self, prepare_vision_frame: VisionFrame, model_name: str) -> Mask:
+        face_occluder = self.get_inference_pool().get(model_name)
 
         with conditional_thread_semaphore():
             occlusion_mask: Mask = face_occluder.run(None,

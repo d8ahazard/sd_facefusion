@@ -42,6 +42,11 @@ def collect_job_args() -> Args:
     return job_args
 
 
+def collect_settings_args() -> Args:
+    from facefusion.user_data import collect_settings_args as _collect_settings_args
+    return _collect_settings_args()
+
+
 def apply_args(args: Args, apply_state_item: bool) -> None:
     if apply_state_item:
         cmd = state_manager.set_item
@@ -58,9 +63,11 @@ def apply_args(args: Args, apply_state_item: bool) -> None:
         'target_folder'
     }
 
-    # 1) face_mask_padding -> normalize
+    # 1) face_mask_padding -> normalize (do not clear state when step args omit or null padding)
     if 'face_mask_padding' in args:
-        cmd('face_mask_padding', normalize_padding(args.get('face_mask_padding')))
+        padding = normalize_padding(args.get('face_mask_padding'))
+        if padding is not None:
+            cmd('face_mask_padding', padding)
 
     # 2) image resolution logic
     if is_image(args.get('target_path')):
@@ -92,97 +99,16 @@ def apply_args(args: Args, apply_state_item: bool) -> None:
             if key == 'target_path':
                 cmd(key, value)
             continue
+        if value is None:
+            continue
         cmd(key, value)
 
     # Let each processor module apply its own arguments
     for processor_module in get_processors_modules():
         try:
             processor_module.apply_args(args, cmd)
-        except Exception as e:
+        except Exception:
             pass
-
-    # Additional initialization for custom YOLO state items
-    if key == 'source_paths':
-        _source_paths = unserialize_array(value)
-        if apply_state_item:
-            state_manager.init_item('source_paths', _source_paths)
-    elif key == 'source_paths_2':
-        _source_paths_2 = unserialize_array(value)
-        if apply_state_item:
-            state_manager.init_item('source_paths_2', _source_paths_2)
-    elif key == 'output_path':
-        if value is not None and value != "None":
-            if apply_state_item:
-                state_manager.init_item('output_path', value)
-        else:
-            if apply_state_item:
-                state_manager.init_item('output_path', None)
-    elif key == 'target_path':
-        if value is not None and value != "None":
-            if apply_state_item:
-                state_manager.init_item('target_path', value)
-        else:
-            if apply_state_item:
-                state_manager.init_item('target_path', None)
-    elif key == 'config_path':
-        if value is not None and value != "None":
-            if apply_state_item:
-                state_manager.init_item('config_path', value)
-        else:
-            if apply_state_item:
-                state_manager.init_item('config_path', None)
-    elif key == 'jobs_path':
-        if value is not None and value != "None":
-            if apply_state_item:
-                state_manager.init_item('jobs_path', value)
-        else:
-            if apply_state_item:
-                state_manager.init_item('jobs_path', None)
-    elif key == 'face_mask_types':
-        if isinstance(value, list):
-            if apply_state_item:
-                state_manager.init_item('face_mask_types', value)
-        else:
-            if apply_state_item:
-                state_manager.init_item('face_mask_types', unserialize_array(value))
-    elif key == 'face_mask_blur':
-        if apply_state_item:
-            state_manager.init_item('face_mask_blur', value)
-    elif key == 'face_mask_padding':
-        if isinstance(value, list):
-            padding = tuple(value) if len(value) == 4 else (value[0], value[0], value[0], value[0])
-            if apply_state_item:
-                state_manager.init_item('face_mask_padding', padding)
-        else:
-            if apply_state_item:
-                value = unserialize_array(value)
-                padding = tuple(value) if len(value) == 4 else (value[0], value[0], value[0], value[0])
-                state_manager.init_item('face_mask_padding', padding)
-    elif key == 'face_mask_regions':
-        if isinstance(value, list):
-            if apply_state_item:
-                state_manager.init_item('face_mask_regions', value)
-        else:
-            if apply_state_item:
-                state_manager.init_item('face_mask_regions', unserialize_array(value))
-    elif key == 'custom_yolo_model':
-        if apply_state_item:
-            state_manager.init_item('custom_yolo_model', value)
-    elif key == 'custom_yolo_confidence':
-        if apply_state_item:
-            state_manager.init_item('custom_yolo_confidence', float(value) if value is not None else 0.5)
-    elif key == 'custom_yolo_radius':
-        if apply_state_item:
-            state_manager.init_item('custom_yolo_radius', int(value) if value is not None else 10)
-    elif key == 'reference_face_position':
-        if apply_state_item:
-            state_manager.init_item('reference_face_position', value)
-    elif key == 'reference_face_distance':
-        if apply_state_item:
-            state_manager.init_item('reference_face_distance', value)
-    elif key == 'reference_frame_number':
-        if apply_state_item:
-            state_manager.init_item('reference_frame_number', value)
 
 
 def apply_globals(globals_dict: dict, init: bool = True) -> None:
@@ -200,7 +126,8 @@ def apply_globals(globals_dict: dict, init: bool = True) -> None:
         'face_selector_age_end', 'face_selector_gender', 'face_selector_race',
         'reference_face_position', 'reference_face_distance', 'reference_frame_number',
         # face masker
-        'face_mask_types', 'face_mask_blur', 'face_mask_padding', 'face_mask_regions',
+        'face_mask_types', 'face_mask_blur', 'face_mask_padding', 'face_mask_regions', 'face_mask_areas',
+        'face_occluder_model',
         # frame extraction
         'trim_frame_start', 'trim_frame_end', 'temp_frame_format', 'keep_temp',
         # output creation
@@ -212,7 +139,8 @@ def apply_globals(globals_dict: dict, init: bool = True) -> None:
         # uis
         'open_browser', 'ui_layouts', 'ui_workflow',
         # execution
-        'execution_device_id', 'execution_providers', 'execution_thread_count', 'execution_queue_count',
+        'execution_device_id', 'execution_device_ids', 'execution_providers', 'execution_thread_count',
+        'execution_queue_count',
         # memory
         'video_memory_strategy', 'system_memory_limit',
         # misc

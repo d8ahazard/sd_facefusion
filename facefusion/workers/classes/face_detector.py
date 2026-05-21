@@ -73,6 +73,25 @@ class FaceDetector(BaseWorker):
                                     'path': resolve_relative_path('../.assets/models/yoloface_8n.onnx')
                                 }
                         }
+                },
+            'yunet':
+                {
+                    'hashes':
+                        {
+                            'yunet':
+                                {
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.4.0/yunet_2023_mar.hash',
+                                    'path': resolve_relative_path('../.assets/models/yunet_2023_mar.hash')
+                                }
+                        },
+                    'sources':
+                        {
+                            'yunet':
+                                {
+                                    'url': 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.4.0/yunet_2023_mar.onnx',
+                                    'path': resolve_relative_path('../.assets/models/yunet_2023_mar.onnx')
+                                }
+                        }
                 }
         }
 
@@ -92,9 +111,12 @@ class FaceDetector(BaseWorker):
         if state_manager.get_item('face_detector_model') in ['many', 'scrfd']:
             model_hashes['scrfd'] = self.MODEL_SET.get('scrfd').get('hashes').get('scrfd')
             model_sources['scrfd'] = self.MODEL_SET.get('scrfd').get('sources').get('scrfd')
-        if state_manager.get_item('face_detector_model') in ['many', 'yoloface']:
+        if state_manager.get_item('face_detector_model') in ['many', 'yoloface', 'yolo_face']:
             model_hashes['yoloface'] = self.MODEL_SET.get('yoloface').get('hashes').get('yoloface')
             model_sources['yoloface'] = self.MODEL_SET.get('yoloface').get('sources').get('yoloface')
+        if state_manager.get_item('face_detector_model') == 'yunet':
+            model_hashes['yunet'] = self.MODEL_SET.get('yunet').get('hashes').get('yunet')
+            model_sources['yunet'] = self.MODEL_SET.get('yunet').get('sources').get('yunet')
         return model_hashes, model_sources
 
     def detect_faces(self, vision_frame: VisionFrame) -> Tuple[List[BoundingBox], List[Score], List[FaceLandmark5]]:
@@ -126,8 +148,15 @@ class FaceDetector(BaseWorker):
             all_face_scores.extend(face_scores)
             all_face_landmarks_5.extend(face_landmarks_5)
 
-        if face_detector_model in ['many', 'yoloface']:
+        if face_detector_model in ['many', 'yoloface', 'yolo_face']:
             bounding_boxes, face_scores, face_landmarks_5 = self.detect_with_yoloface_optimized(
+                detect_vision_frame, face_detector_size, ratio_width, ratio_height)
+            all_bounding_boxes.extend(bounding_boxes)
+            all_face_scores.extend(face_scores)
+            all_face_landmarks_5.extend(face_landmarks_5)
+
+        if face_detector_model == 'yunet':
+            bounding_boxes, face_scores, face_landmarks_5 = self.detect_with_yunet_optimized(
                 detect_vision_frame, face_detector_size, ratio_width, ratio_height)
             all_bounding_boxes.extend(bounding_boxes)
             all_face_scores.extend(face_scores)
@@ -383,6 +412,64 @@ class FaceDetector(BaseWorker):
 
         return bounding_boxes, face_scores, face_landmarks_5
 
+    def detect_with_yunet_optimized(self, detect_vision_frame: VisionFrame, face_detector_size: str,
+                                    ratio_width: float, ratio_height: float) -> Tuple[
+        List[BoundingBox], List[Score], List[FaceLandmark5]]:
+        bounding_boxes = []
+        face_scores = []
+        face_landmarks_5 = []
+        feature_strides = [8, 16, 32]
+        feature_map_channel = 3
+        anchor_total = 1
+        face_detector_score = state_manager.get_item('face_detector_score')
+        face_detector_width, face_detector_height = unpack_resolution(face_detector_size)
+        normalized_frame = detect_vision_frame.astype(numpy.float32) / 255.0
+        detection = self.forward_with_yunet(normalized_frame)
+
+        for index, feature_stride in enumerate(feature_strides):
+            face_scores_raw = (detection[index] * detection[index + feature_map_channel]).reshape(-1)
+            keep_indices = numpy.where(face_scores_raw >= face_detector_score)[0]
+
+            if numpy.any(keep_indices):
+                stride_height = face_detector_height // feature_stride
+                stride_width = face_detector_width // feature_stride
+                anchors = create_static_anchors(feature_stride, anchor_total, stride_height, stride_width)
+                bounding_boxes_center = detection[index + feature_map_channel * 2].squeeze(0)[:, :2] * feature_stride + anchors
+                bounding_boxes_size = numpy.exp(detection[index + feature_map_channel * 2].squeeze(0)[:, 2:4]) * feature_stride
+                face_landmarks_5_raw = detection[index + feature_map_channel * 3].squeeze(0)
+
+                bounding_boxes_raw = numpy.stack(
+                    [
+                        bounding_boxes_center[:, 0] - bounding_boxes_size[:, 0] / 2,
+                        bounding_boxes_center[:, 1] - bounding_boxes_size[:, 1] / 2,
+                        bounding_boxes_center[:, 0] + bounding_boxes_size[:, 0] / 2,
+                        bounding_boxes_center[:, 1] + bounding_boxes_size[:, 1] / 2,
+                    ], axis=-1)
+
+                for bounding_box_raw in bounding_boxes_raw[keep_indices]:
+                    bounding_boxes.append(numpy.array(
+                        [
+                            bounding_box_raw[0] * ratio_width,
+                            bounding_box_raw[1] * ratio_height,
+                            bounding_box_raw[2] * ratio_width,
+                            bounding_box_raw[3] * ratio_height,
+                        ]))
+
+                face_scores.extend(face_scores_raw[keep_indices])
+                face_landmarks_5_raw = numpy.concatenate(
+                    [
+                        face_landmarks_5_raw[:, [0, 1]] * feature_stride + anchors,
+                        face_landmarks_5_raw[:, [2, 3]] * feature_stride + anchors,
+                        face_landmarks_5_raw[:, [4, 5]] * feature_stride + anchors,
+                        face_landmarks_5_raw[:, [6, 7]] * feature_stride + anchors,
+                        face_landmarks_5_raw[:, [8, 9]] * feature_stride + anchors,
+                    ], axis=-1).reshape(-1, 5, 2)
+
+                for face_landmark_raw_5 in face_landmarks_5_raw[keep_indices]:
+                    face_landmarks_5.append(face_landmark_raw_5 * [ratio_width, ratio_height])
+
+        return bounding_boxes, face_scores, face_landmarks_5
+
     def forward_with_retinaface(self, detect_vision_frame: VisionFrame) -> Detection:
         inference_pool = self.get_inference_pool()
         face_detector = self.get_inference_pool().get('retinaface')
@@ -408,6 +495,17 @@ class FaceDetector(BaseWorker):
 
     def forward_with_yoloface(self, detect_vision_frame: VisionFrame) -> Detection:
         face_detector = self.get_inference_pool().get('yoloface')
+
+        with thread_semaphore():
+            detection = face_detector.run(None,
+                                          {
+                                              'input': detect_vision_frame
+                                          })
+
+        return detection
+
+    def forward_with_yunet(self, detect_vision_frame: VisionFrame) -> Detection:
+        face_detector = self.get_inference_pool().get('yunet')
 
         with thread_semaphore():
             detection = face_detector.run(None,

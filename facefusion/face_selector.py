@@ -40,7 +40,12 @@ def calc_face_distance(face: Face, reference_face: Face) -> float:
     return 1  # Maximum distance if can't calculate
 
 
-def sort_and_filter_faces(faces: List[Face], sorts=None, vision_frame: VisionFrame = None) -> List[Face]:
+def sort_and_filter_faces(
+        faces: List[Face],
+        sorts=None,
+        vision_frame: VisionFrame = None,
+        skip_auto_padding: bool = False,
+) -> List[Face]:
     if not sorts:
         sorts = current_sort_values()
     if faces:
@@ -59,15 +64,19 @@ def sort_and_filter_faces(faces: List[Face], sorts=None, vision_frame: VisionFra
         if age_start or age_end:
             faces = filter_by_age(faces, age_start, age_end)
         
-        # Auto-padding detection
+        # Auto-padding detection (can be skipped by specific callers, e.g. detected-face gallery scans).
         auto_padding_model = state_manager.get_item('auto_padding_model')
-        if auto_padding_model and auto_padding_model != "None" and vision_frame is not None:
+        if (
+            not skip_auto_padding
+            and auto_padding_model
+            and auto_padding_model != "None"
+            and vision_frame is not None
+        ):
             try:
                 from facefusion.workers.classes.face_masker import FaceMasker
                 masker = FaceMasker()
                 intersections = masker.detect_face_object_intersections(vision_frame, faces, auto_padding_model)
-                
-                # Attach intersection data to each face
+
                 for face_idx, face in enumerate(faces):
                     if face_idx in intersections:
                         face.auto_padding_data = intersections[face_idx]
@@ -76,17 +85,20 @@ def sort_and_filter_faces(faces: List[Face], sorts=None, vision_frame: VisionFra
                             'has_intersection': False,
                             'objects_detected': [],
                             'padding_needed': False,
-                            'recommended_padding': (0, 0, 0, 0)
+                            'recommended_padding': (0, 0, 0, 0),
+                            'area_mask_needed': False,
+                            'recommended_mask_areas': [],
                         }
             except Exception as e:
                 logger.warn(f"Auto-padding detection failed: {e}", __name__)
-                # Set default auto-padding data for all faces
                 for face in faces:
                     face.auto_padding_data = {
                         'has_intersection': False,
                         'objects_detected': [],
                         'padding_needed': False,
-                        'recommended_padding': (0, 0, 0, 0)
+                        'recommended_padding': (0, 0, 0, 0),
+                        'area_mask_needed': False,
+                        'recommended_mask_areas': [],
                     }
     return faces
 

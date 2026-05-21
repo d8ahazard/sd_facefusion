@@ -1,8 +1,7 @@
-from typing import List, Sequence
-
+from typing import List, Sequence, get_args
 
 from facefusion.common_helper import create_float_range, create_int_range
-from facefusion.processors.typing import FaceSwapperSet, FaceDebuggerItem
+from facefusion.processors.typing import BackgroundRemoverModel, FaceSwapperSet, FaceDebuggerItem
 
 # age_modifier_models: List[AgeModifierModel] = ['styleganex_age']
 # expression_restorer_models: List[ExpressionRestorerModel] = ['live_portrait']
@@ -19,12 +18,17 @@ face_swapper_set: FaceSwapperSet = \
         'ghost_1_256': ['256x256', '512x512', '768x768', '1024x1024'],
         'ghost_2_256': ['256x256', '512x512', '768x768', '1024x1024'],
         'ghost_3_256': ['256x256', '512x512', '768x768', '1024x1024'],
+        'hififace_unofficial_256': ['256x256', '512x512', '768x768', '1024x1024'],
+        'hyperswap_1a_256': ['256x256', '512x512', '768x768', '1024x1024'],
+        'hyperswap_1b_256': ['256x256', '512x512', '768x768', '1024x1024'],
+        'hyperswap_1c_256': ['256x256', '512x512', '768x768', '1024x1024'],
         'inswapper_128': ['128x128', '256x256', '384x384', '512x512', '768x768', '1024x1024'],
         'inswapper_128_fp16': ['128x128', '256x256', '384x384', '512x512', '768x768', '1024x1024'],
         'simswap_256': ['256x256', '512x512', '768x768', '1024x1024'],
         'simswap_unofficial_512': ['512x512', '768x768', '1024x1024'],
         'uniface_256': ['256x256', '512x512', '768x768', '1024x1024']
     }
+face_swapper_weight_range: Sequence[float] = create_float_range(0.0, 1.0, 0.05)
 # frame_colorizer_models: List[FrameColorizerModel] = ['ddcolor', 'ddcolor_artistic', 'deoldify', 'deoldify_artistic',
 #                                                      'deoldify_stable']
 frame_colorizer_sizes: List[str] = ['192x192', '256x256', '384x384', '512x512']
@@ -35,6 +39,9 @@ frame_colorizer_sizes: List[str] = ['192x192', '256x256', '384x384', '512x512']
 # lip_syncer_models: List[LipSyncerModel] = ['wav2lip_96', 'wav2lip_gan_96']
 
 age_modifier_direction_range: Sequence[int] = create_int_range(-100, 100, 1)
+background_remover_models: List[BackgroundRemoverModel] = list(get_args(BackgroundRemoverModel))
+background_remover_color_range: Sequence[int] = create_int_range(0, 255, 1)
+deep_swapper_morph_range: Sequence[int] = create_int_range(0, 100, 1)
 expression_restorer_factor_range: Sequence[int] = create_int_range(0, 100, 1)
 face_editor_eyebrow_direction_range: Sequence[float] = create_float_range(-1.0, 1.0, 0.05)
 face_editor_eye_gaze_horizontal_range: Sequence[float] = create_float_range(-1.0, 1.0, 0.05)

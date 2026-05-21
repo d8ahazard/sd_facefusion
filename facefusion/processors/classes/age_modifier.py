@@ -154,11 +154,7 @@ class AgeModifier(BaseProcessor):
             many_faces = sort_and_filter_faces(get_many_faces([target_vision_frame], is_target_frame=True))
         face_selector_mode = state_manager.get_item("face_selector_mode")
 
-        if face_selector_mode == "many":
-            if many_faces:
-                for target_face in many_faces:
-                    target_vision_frame = self.modify_age(target_face, target_vision_frame)
-        elif face_selector_mode == "one":
+        if face_selector_mode == "one":
             target_face = get_one_face(many_faces)
             if target_face:
                 target_vision_frame = self.modify_age(target_face, target_vision_frame)

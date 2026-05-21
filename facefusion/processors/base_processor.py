@@ -121,14 +121,20 @@ class BaseProcessor(ABC):
         inference_manager.clear_inference_pool(model_context)
         self.inference_pool = None
 
-    def set_model_options(self):
+    def _resolve_model_choice(self) -> str:
         model_choice = state_manager.get_item(self.model_key)
-        if model_choice is None:
-            if self.default_model is not None:
-                model_choice = self.default_model
-                state_manager.set_item(self.model_key, model_choice)
-                logger.error(f"Model choice not found for {self.model_key}.", __name__)
-                return True
+        if not model_choice and self.default_model is not None:
+            model_choice = self.default_model
+            state_manager.set_item(self.model_key, model_choice)
+            logger.debug(
+                f'Using default {self.model_key}={model_choice}',
+                __name__,
+            )
+        return model_choice
+
+    def set_model_options(self):
+        model_choice = self._resolve_model_choice()
+        if not model_choice:
             return False
         model_options = self.MODEL_SET.get(model_choice, False)
         return model_options is not False
@@ -137,13 +143,10 @@ class BaseProcessor(ABC):
         """
         Get the model options for the processor.
         """
-        model_choice = state_manager.get_item(self.model_key)
-        if model_choice is None and self.default_model is not None:
-            model_choice = self.default_model
-            state_manager.set_item(self.model_key, model_choice)
-            logger.error(f"Model choice not found for {self.model_key}.", __name__)
+        model_choice = self._resolve_model_choice()
+        if not model_choice:
             return {}
-        return self.MODEL_SET.get(model_choice, {})
+        return self.MODEL_SET.get(model_choice, {}) or {}
 
     def process_video(self, temp_frame_paths: List[str]) -> None:
         """

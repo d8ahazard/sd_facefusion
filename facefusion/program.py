@@ -45,7 +45,10 @@ def create_paths_program() -> ArgumentParser:
                              default=config.get_str_value('paths.target_path'))
     group_paths.add_argument('-o', '--output-path', help=wording.get('help.output_path'),
                              default=config.get_str_value('paths.output_path'))
-    job_store.register_step_keys(['source_paths', 'source_paths_2', 'target_path', 'output_path', 'reference_face_dict', 'reference_face_dict', 'source_frame_dict'])
+    job_store.register_step_keys([
+        'source_paths', 'source_paths_2', 'target_path', 'output_path',
+        'reference_face_dict', 'source_frame_dict', 'mapping_slot_keys',
+    ])
     return program
 
 
@@ -53,7 +56,7 @@ def create_face_detector_program() -> ArgumentParser:
     program = ArgumentParser(add_help=False)
     group_face_detector = program.add_argument_group('face detector')
     group_face_detector.add_argument('--face-detector-model', help=wording.get('help.face_detector_model'),
-                                     default=config.get_str_value('face_detector.face_detector_model', 'yoloface'),
+                                     default=config.get_str_value('face_detector.face_detector_model', 'yolo_face'),
                                      choices=facefusion.choices.face_detector_set.keys())
     group_face_detector.add_argument('--face-detector-size', help=wording.get('help.face_detector_size'),
                                      default=config.get_str_value('face_detector.face_detector_size', '640x640'),
@@ -145,14 +148,34 @@ def create_face_masker_program() -> ArgumentParser:
                                    default=config.get_str_list('face_masker.face_mask_regions',
                                                                ' '.join(facefusion.choices.face_mask_regions)),
                                    choices=facefusion.choices.face_mask_regions, nargs='+', metavar='FACE_MASK_REGIONS')
+    group_face_masker.add_argument('--face-mask-areas', help='face mask areas (upper-face, lower-face, mouth)',
+                                   default=config.get_str_list('face_masker.face_mask_areas', ''),
+                                   choices=list(facefusion.choices.face_mask_area_set.keys()), nargs='+',
+                                   metavar='FACE_MASK_AREAS')
+    group_face_masker.add_argument('--face-occluder-model', help='face occluder model',
+                                   default=config.get_str_value('face_masker.face_occluder_model', 'xseg_3'),
+                                   choices=['many', 'xseg_1', 'xseg_2', 'xseg_3', 'face_occluder'])
     group_face_masker.add_argument('--custom-yolo-model', help="Path to YOLO model for custom object detection mask", type=str,
                                    default=config.get_str_value('face_masker.custom_yolo_model', None))
     group_face_masker.add_argument('--custom-yolo-confidence', help="Confidence threshold for YOLO detection (0.0-1.0)", type=float,
                                    default=config.get_float_value('face_masker.custom_yolo_confidence', '0.5'))
     group_face_masker.add_argument('--custom-yolo-radius', help="Blur radius for custom mask edges (pixels)", type=int,
                                    default=config.get_int_value('face_masker.custom_yolo_radius', '10'))
-    job_store.register_step_keys(['face_mask_types', 'face_mask_blur', 'face_mask_padding', 'face_mask_regions',
-                                 'custom_yolo_model', 'custom_yolo_confidence', 'custom_yolo_radius'])
+    job_store.register_step_keys([
+        'face_mask_types',
+        'face_mask_blur',
+        'face_mask_padding',
+        'face_mask_regions',
+        'face_mask_areas',
+        'face_occluder_model',
+        'custom_yolo_model',
+        'custom_yolo_confidence',
+        'custom_yolo_radius',
+        'auto_padding_model',
+        'auto_padding_confidence',
+        'auto_padding_intersection_threshold',
+        'auto_padding_mask_areas',
+    ])
     return program
 
 
@@ -182,6 +205,10 @@ def create_output_creation_program() -> ArgumentParser:
                                        metavar=create_int_metavar(facefusion.choices.output_image_quality_range))
     group_output_creation.add_argument('--output-image-resolution', help=wording.get('help.output_image_resolution'),
                                        default=config.get_str_value('output_creation.output_image_resolution'))
+    group_output_creation.add_argument('--output-image-scale', help='output image scale multiplier', type=float,
+                                       default=config.get_float_value('output_creation.output_image_scale', '1.0'),
+                                       choices=facefusion.choices.output_image_scale_range,
+                                       metavar=create_float_metavar(facefusion.choices.output_image_scale_range))
     group_output_creation.add_argument('--output-audio-encoder', help=wording.get('help.output_audio_encoder'),
                                        default=config.get_str_value('output_creation.output_audio_encoder', 'aac'),
                                        choices=facefusion.choices.output_audio_encoders)
@@ -198,13 +225,18 @@ def create_output_creation_program() -> ArgumentParser:
                                        metavar=create_int_metavar(facefusion.choices.output_video_quality_range))
     group_output_creation.add_argument('--output-video-resolution', help=wording.get('help.output_video_resolution'),
                                        default=config.get_str_value('output_creation.output_video_resolution'))
+    group_output_creation.add_argument('--output-video-scale', help='output video scale multiplier', type=float,
+                                       default=config.get_float_value('output_creation.output_video_scale', '1.0'),
+                                       choices=facefusion.choices.output_video_scale_range,
+                                       metavar=create_float_metavar(facefusion.choices.output_video_scale_range))
     group_output_creation.add_argument('--output-video-fps', help=wording.get('help.output_video_fps'), type=float,
                                        default=config.get_str_value('output_creation.output_video_fps'))
     group_output_creation.add_argument('--skip-audio', help=wording.get('help.skip_audio'), action='store_true',
                                        default=config.get_bool_value('output_creation.skip_audio'))
     job_store.register_step_keys(
-        ['output_image_quality', 'output_image_resolution', 'output_audio_encoder', 'output_video_encoder',
-         'output_video_preset', 'output_video_quality', 'output_video_resolution', 'output_video_fps', 'skip_audio'])
+        ['output_image_quality', 'output_image_resolution', 'output_image_scale', 'output_audio_encoder',
+         'output_video_encoder', 'output_video_preset', 'output_video_quality', 'output_video_resolution',
+         'output_video_scale', 'output_video_fps', 'skip_audio'])
     return program
 
 
@@ -248,6 +280,9 @@ def create_execution_program() -> ArgumentParser:
     group_execution = program.add_argument_group('execution')
     group_execution.add_argument('--execution-device-id', help=wording.get('help.execution_device_id'),
                                  default=config.get_str_value('execution.execution_device_id', '0'))
+    group_execution.add_argument('--execution-device-ids', help='CUDA device id list for multi-GPU', type=int,
+                                 default=config.get_int_list('execution.execution_device_ids', '0'), nargs='+',
+                                 metavar='EXECUTION_DEVICE_IDS')
     group_execution.add_argument('--execution-providers', help=wording.get('help.execution_providers').format(
         choices=', '.join(execution_providers)), default=config.get_str_list('execution.execution_providers', 'cpu'),
                                  choices=execution_providers, nargs='+', metavar='EXECUTION_PROVIDERS')
@@ -260,7 +295,8 @@ def create_execution_program() -> ArgumentParser:
                                  choices=facefusion.choices.execution_queue_count_range,
                                  metavar=create_int_metavar(facefusion.choices.execution_queue_count_range))
     job_store.register_job_keys(
-        ['execution_device_id', 'execution_providers', 'execution_thread_count', 'execution_queue_count'])
+        ['execution_device_id', 'execution_device_ids', 'execution_providers', 'execution_thread_count',
+         'execution_queue_count'])
     return program
 
 
@@ -283,7 +319,10 @@ def create_skip_download_program() -> ArgumentParser:
     group_misc = program.add_argument_group('misc')
     group_misc.add_argument('--skip-download', help=wording.get('help.skip_download'), action='store_true',
                             default=config.get_bool_value('misc.skip_download'))
-    job_store.register_job_keys(['skip_download'])
+    group_misc.add_argument('--download-scope', help='model download scope (lite or full)',
+                            default=config.get_str_value('misc.download_scope', 'lite'),
+                            choices=facefusion.choices.download_scopes)
+    job_store.register_job_keys(['skip_download', 'download_scope'])
     return program
 
 

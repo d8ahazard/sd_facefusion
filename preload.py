@@ -16,6 +16,12 @@ else:
 
 
 def preload(parser: argparse.ArgumentParser):
+    parser.add_argument(
+        '--ff-classic-ui',
+        action='store_true',
+        default=False,
+        help='Use the legacy FaceFusion tab UI (File / Live / Benchmark) instead of the redesigned UI.',
+    )
     os.environ['CUDA_MODULE_LOADING'] = 'LAZY'
     # Ensure extension_sd_facefusion.facefusion is added to the PATH as 'facefusion'
     os.environ['PATH'] = os.pathsep.join(
@@ -44,6 +50,21 @@ def preload(parser: argparse.ArgumentParser):
                 globals_dict[key] = value
     args.apply_args(globals_dict, False)
     state_manager.init_item("config_path", ff_ini)
+
+    try:
+        from facefusion.user_data import apply_saved_defaults_over_state
+        if apply_saved_defaults_over_state():
+            print("Loaded FaceFusion UI defaults from user_data/ui_defaults.json")
+    except ImportError:
+        pass
+
+    if state_manager.get_item('target_paths') is None:
+        tp = state_manager.get_item('target_path')
+        state_manager.init_item('target_paths', [tp] if tp else [])
+    if state_manager.get_item('active_target_index') is None:
+        state_manager.init_item('active_target_index', 0)
+    if state_manager.get_item('source_slot_labels') is None:
+        state_manager.init_item('source_slot_labels', {})
     
     # Initialize YOLO mask state items if not already set
     if state_manager.get_item('custom_yolo_model') is None:
@@ -52,6 +73,12 @@ def preload(parser: argparse.ArgumentParser):
         state_manager.init_item('custom_yolo_confidence', 0.5)
     if state_manager.get_item('custom_yolo_radius') is None:
         state_manager.init_item('custom_yolo_radius', 10)
+    if state_manager.get_item('auto_padding_model') is None:
+        state_manager.init_item('auto_padding_model', 'None')
+    if state_manager.get_item('auto_padding_confidence') is None:
+        state_manager.init_item('auto_padding_confidence', 0.5)
+    if state_manager.get_item('auto_padding_intersection_threshold') is None:
+        state_manager.init_item('auto_padding_intersection_threshold', 50)
     # Initialize mask time state items
     if state_manager.get_item('mask_disabled_times') is None:
         state_manager.init_item('mask_disabled_times', [0])

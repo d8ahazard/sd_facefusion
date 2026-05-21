@@ -1,11 +1,15 @@
+import os
 import subprocess
 import xml.etree.ElementTree as ElementTree
 from functools import lru_cache
 from typing import Any, List
 
+import onnxruntime
+
 from onnxruntime import get_available_providers, set_default_logger_severity
 
 from facefusion.choices import execution_provider_set
+from facefusion.filesystem import create_directory, is_directory
 from facefusion.typing import ExecutionDevice, ExecutionProviderKey, ExecutionProviderSet, ValueAndUnit
 
 set_default_logger_severity(3)
@@ -39,18 +43,20 @@ def create_execution_providers(execution_device_id: str, execution_provider_keys
             execution_providers.append((execution_provider_set.get(execution_provider_key),
                                         {
                                             'device_id': execution_device_id,
-                                            #'cudnn_conv_algo_search': 'EXHAUSTIVE' if use_exhaustive() else 'DEFAULT'
+                                            'cudnn_conv_algo_search': 'DEFAULT' if use_exhaustive() else 'EXHAUSTIVE',
                                         }))
         if execution_provider_key == 'tensorrt':
-            execution_providers.append((execution_provider_set.get(execution_provider_key),
-                                        {
-                                            'device_id': execution_device_id,
-                                            'trt_engine_cache_enable': True,
-                                            'trt_engine_cache_path': '.caches',
-                                            'trt_timing_cache_enable': True,
-                                            'trt_timing_cache_path': '.caches',
-                                            'trt_builder_optimization_level': 5
-                                        }))
+            cache_path = resolve_cache_path()
+            tensorrt_options = {
+                'device_id': execution_device_id,
+                'trt_engine_cache_enable': True,
+                'trt_timing_cache_enable': True,
+                'trt_builder_optimization_level': 4,
+            }
+            if is_directory(cache_path) or create_directory(cache_path):
+                tensorrt_options['trt_engine_cache_path'] = cache_path
+                tensorrt_options['trt_timing_cache_path'] = cache_path
+            execution_providers.append((execution_provider_set.get(execution_provider_key), tensorrt_options))
         if execution_provider_key == 'openvino':
             execution_providers.append((execution_provider_set.get(execution_provider_key),
                                         {
@@ -71,12 +77,19 @@ def create_execution_providers(execution_device_id: str, execution_provider_keys
     return execution_providers
 
 
+def resolve_cache_path() -> str:
+    return os.path.join('.caches', onnxruntime.__version__)
+
+
 def use_exhaustive() -> bool:
+    """True for GPUs that should use DEFAULT cudnn search (low-end GTX 16xx)."""
     execution_devices = detect_static_execution_devices()
     product_names = ('GeForce GTX 1630', 'GeForce GTX 1650', 'GeForce GTX 1660')
 
     return any(
-        execution_device.get('product').get('name').startswith(product_names) for execution_device in execution_devices)
+        execution_device.get('product', {}).get('name', '').startswith(product_names)
+        for execution_device in execution_devices
+    )
 
 
 def run_nvidia_smi() -> subprocess.Popen[bytes]:

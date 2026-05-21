@@ -86,7 +86,10 @@ def format_status():
         progress = 0
 
     status_string = status.status if status.status is not None else ""
-    hidden_div = f"<div style='display:none' id='statusDiv' data-started={'true' if status.started else 'false'}></div>"
+    textinfo = getattr(status, 'textinfo', '') or ''
+    if textinfo and textinfo not in status_string:
+        status_string = f'{textinfo} {status_string}'.strip()
+    hidden_div = f"<motion.div style='display:none' id='statusDiv' data-started={'true' if status.started else 'false'}></motion.div>"
     status_string = f"{hidden_div}{status_string}"
     if 0 < progress < 1:
         time_left = calc_time_left(progress, threshold=60, label="ETA: ", force_display=True)

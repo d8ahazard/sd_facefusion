@@ -428,15 +428,7 @@ class LipSyncer(BaseProcessor):
         
         # Process faces based on the face selector mode
         face_selector_mode = state_manager.get_item('face_selector_mode')
-        if face_selector_mode == 'many':
-            if many_faces:
-                for target_face in many_faces:
-                    try:
-                        target_vision_frame = self.sync_lip(target_face, source_audio_frame, target_vision_frame)
-                    except Exception as e:
-                        logger.error(f"Error while syncing lip for 'many' mode: {e}", __name__)
-        
-        elif face_selector_mode == 'one':
+        if face_selector_mode == 'one':
             target_face = get_one_face(many_faces)
             if target_face:
                 try:

@@ -1,7 +1,7 @@
 import gradio
 
 from facefusion import state_manager
-from facefusion.uis.components import (age_modifier_options, common_options, expression_restorer_options, \
+from facefusion.uis.components import (age_modifier_options, background_remover_options, common_options, deep_swapper_options, expression_restorer_options, \
                                       face_buffer_options, face_debugger_options, face_detector, face_editor_options, \
                                       face_enhancer_options, face_landmarker, face_masker, face_selector,
                                       face_swapper_options, frame_colorizer_options, \
@@ -35,6 +35,10 @@ def render() -> gradio.Blocks:
                     face_enhancer_options.render()
                 with gradio.Blocks():
                     face_swapper_options.render()
+                with gradio.Blocks():
+                    deep_swapper_options.render()
+                with gradio.Blocks():
+                    background_remover_options.render()
                 with gradio.Blocks():
                     frame_colorizer_options.render()
                 with gradio.Blocks():
@@ -99,6 +103,8 @@ def listen() -> None:
     face_editor_options.listen()
     face_enhancer_options.listen()
     face_swapper_options.listen()
+    deep_swapper_options.listen()
+    background_remover_options.listen()
     frame_colorizer_options.listen()
     frame_enhancer_options.listen()
     lip_syncer_options.listen()

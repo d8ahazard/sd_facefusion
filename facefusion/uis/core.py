@@ -45,12 +45,15 @@ COMPONENT_STATE_KEYS: Dict[str, str] = {
     # Face Mask
     'face_mask_types_checkbox_group': 'face_mask_types',
     'face_mask_regions_checkbox_group': 'face_mask_regions',
+    'face_mask_areas_checkbox_group': 'face_mask_areas',
     'face_mask_blur_slider': 'face_mask_blur',
     'auto_padding_model_dropdown': 'auto_padding_model',
     'auto_padding_confidence_slider': 'auto_padding_confidence',
     'auto_padding_intersection_threshold_slider': 'auto_padding_intersection_threshold',
+    'auto_padding_mask_areas_checkbox_group': 'auto_padding_mask_areas',
     # Face Selector
     'face_selector_mode_dropdown': 'face_selector_mode',
+    'face_selector_mode_settings_dropdown': 'face_selector_mode',
     'face_selector_order_dropdown': 'face_selector_order',
     'face_selector_gender_dropdown': 'face_selector_gender',
     'face_selector_race_dropdown': 'face_selector_race',
@@ -76,6 +79,11 @@ COMPONENT_STATE_KEYS: Dict[str, str] = {
     # Age Modifier
     'age_modifier_model_dropdown': 'age_modifier_model',
     'age_modifier_direction_slider': 'age_modifier_direction',
+    # Deep Swapper
+    'deep_swapper_model_dropdown': 'deep_swapper_model',
+    'deep_swapper_morph_slider': 'deep_swapper_morph',
+    # Background Remover
+    'background_remover_model_dropdown': 'background_remover_model',
     # Expression Restorer
     'expression_restorer_model_dropdown': 'expression_restorer_model',
     'expression_restorer_factor_slider': 'expression_restorer_factor',
@@ -93,6 +101,14 @@ COMPONENT_SPECIAL_KEYS: Dict[str, tuple] = {
     'face_mask_padding_right_slider': ('face_mask_padding', 1),
     'face_mask_padding_bottom_slider': ('face_mask_padding', 2),
     'face_mask_padding_left_slider': ('face_mask_padding', 3),
+    'background_remover_fill_color_red_number': ('background_remover_fill_color', 0),
+    'background_remover_fill_color_green_number': ('background_remover_fill_color', 1),
+    'background_remover_fill_color_blue_number': ('background_remover_fill_color', 2),
+    'background_remover_fill_color_alpha_number': ('background_remover_fill_color', 3),
+    'background_remover_despill_color_red_number': ('background_remover_despill_color', 0),
+    'background_remover_despill_color_green_number': ('background_remover_despill_color', 1),
+    'background_remover_despill_color_blue_number': ('background_remover_despill_color', 2),
+    'background_remover_despill_color_alpha_number': ('background_remover_despill_color', 3),
 }
 
 
@@ -142,11 +158,19 @@ def register_ui_component(component_name: ComponentName, component: Component) -
     component_elem_id = "ff3_" + component_name
     if component_name not in UI_COMPONENTS:
         try:
-            setattr(component, 'elem_id', component_elem_id)
+            if not getattr(component, 'elem_id', None):
+                setattr(component, 'elem_id', component_elem_id)
             setattr(component, 'do_not_save_to_config', True)
         except AttributeError:
-            component.elem_id = component_elem_id
-        UI_COMPONENTS[component_name] = component
+            if not getattr(component, 'elem_id', None):
+                component.elem_id = component_elem_id
+    else:
+        try:
+            setattr(component, 'do_not_save_to_config', True)
+        except AttributeError:
+            pass
+    # Always keep the component from the most recent render (Map tab re-registers after Settings/Media).
+    UI_COMPONENTS[component_name] = component
 
 
 def get_valid_reload_components() -> List[tuple]:
@@ -191,9 +215,16 @@ def reload_all_settings() -> tuple:
             else:
                 updates.append(gradio.update())
         else:
-            # Standard values
-            if value is not None:
-                updates.append(gradio.update(value=value))
+            if state_key == 'auto_padding_mask_areas':
+                from facefusion.choices import auto_padding_mask_areas_for_ui
+                updates.append(gradio.update(value=auto_padding_mask_areas_for_ui(value)))
+            elif value is not None:
+                if state_key == 'auto_padding_model':
+                    from facefusion.uis.components.face_masker import find_yolo_models, _auto_padding_dropdown_value
+                    model_names = ['None'] + [os.path.basename(m) for m in find_yolo_models()]
+                    updates.append(gradio.update(value=_auto_padding_dropdown_value(value, model_names)))
+                else:
+                    updates.append(gradio.update(value=value))
             else:
                 updates.append(gradio.update())
     

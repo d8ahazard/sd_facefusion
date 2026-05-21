@@ -70,6 +70,8 @@ def set_static_faces(vision_frame: VisionFrame, faces: List[Face]) -> None:
 
 def clear_static_faces() -> None:
     FACE_STORE.clear()
+    from facefusion.face_analyser import clear_vision_frame_cache
+    clear_vision_frame_cache()
 
 
 def get_reference_face(frame_number: int, face_idx: int, sorts: Dict[str, Any]) -> Optional[Face]:

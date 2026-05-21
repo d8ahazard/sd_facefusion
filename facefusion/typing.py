@@ -60,7 +60,9 @@ class Face(_BaseFace):
             'has_intersection': False,
             'objects_detected': [],
             'padding_needed': False,
-            'recommended_padding': (0, 0, 0, 0)
+            'recommended_padding': (0, 0, 0, 0),
+            'area_mask_needed': False,
+            'recommended_mask_areas': [],
         }
 FaceSet = Dict[str, List[Face]]
 FaceStore = TypedDict('FaceStore',
@@ -115,22 +117,23 @@ LogLevelSet = Dict[LogLevel, int]
 TableHeaders = List[str]
 TableContents = List[List[Any]]
 VideoMemoryStrategy = Literal['strict', 'moderate', 'tolerant']
-FaceDetectorModel = Literal['many', 'retinaface', 'scrfd', 'yoloface']
 FaceLandmarkerModel = Literal['many', '2dfan4', 'peppa_wutz']
-FaceDetectorSet = Dict[FaceDetectorModel, List[str]]
-FaceSelectorMode = Literal['many', 'one', 'reference']
+FaceSelectorMode = Literal['one', 'reference']
 FaceSelectorOrder = Literal[
     'left-right', 'right-left', 'top-bottom', 'bottom-top', 'small-large', 'large-small', 'best-worst', 'worst-best']
 FaceAnalyserAge = Literal['child', 'teen', 'adult', 'senior']
 FaceAnalyserGender = Literal['female', 'male']
-FaceDetectorModel = Literal['many', 'retinaface', 'scrfd', 'yoloface', 'yunet']
+FaceDetectorModel = Literal['many', 'retinaface', 'scrfd', 'yolo_face', 'yoloface', 'yunet']
+FaceDetectorSet = Dict[FaceDetectorModel, List[str]]
 FaceDetectorTweak = Literal['low-luminance', 'high-luminance']
 FaceRecognizerModel = Literal[
     'arcface_blendswap', 'arcface_ghost', 'arcface_inswapper', 'arcface_simswap', 'arcface_uniface']
-FaceMaskType = Literal[
-    'box', 'occlusion', 'region', 'custom']
+FaceMaskType = Literal['box', 'occlusion', 'area', 'region', 'custom']
+FaceMaskArea = Literal['upper-face', 'lower-face', 'mouth']
+FaceMaskAreaSet = Dict[FaceMaskArea, List[int]]
 FaceMaskRegion = Literal[
     'skin', 'left-eyebrow', 'right-eyebrow', 'left-eye', 'right-eye', 'glasses', 'nose', 'mouth', 'upper-lip', 'lower-lip']
+FaceOccluderModel = Literal['many', 'xseg_1', 'xseg_2', 'xseg_3', 'face_occluder']
 TempFrameFormat = Literal['jpg', 'png', 'bmp']
 OutputAudioEncoder = Literal['aac', 'libmp3lame', 'libopus', 'libvorbis']
 OutputVideoEncoder = Literal[
@@ -226,6 +229,8 @@ StateKey = Literal[
     'source_paths_2',
     'source_frame_dict',
     'target_path',
+    'target_paths',
+    'active_target_index',
     'output_path',
     'face_detector_model',
     'face_detector_size',

@@ -103,26 +103,36 @@ def download_video(target_url: str) -> str:
 
 
 def conditional_download(download_directory_path: str, urls: List[str]) -> None:
+    curl_path = shutil.which('curl')
+    if not curl_path:
+        logger.error('curl not found; cannot download models', __name__)
+        return
+    os.makedirs(download_directory_path, exist_ok=True)
     for url in urls:
         download_file_name = os.path.basename(urlparse(url).path)
         download_file_path = os.path.join(download_directory_path, download_file_name)
         initial_size = get_file_size(download_file_path)
         download_size = get_download_size(url)
+        needs_download = not is_file(download_file_path) or (
+            download_size > 0 and initial_size < download_size
+        )
 
-        if initial_size < download_size:
-            with tqdm(total=download_size, initial=initial_size, desc=wording.get('downloading'), unit='B',
+        if needs_download:
+            with tqdm(total=download_size or None, initial=initial_size, desc=wording.get('downloading'), unit='B',
                       unit_scale=True, unit_divisor=1024, ascii=' =',
                       disable=state_manager.get_item('log_level') in ['warn', 'error']) as progress:
-                subprocess.Popen(
-                    [shutil.which('curl'), '--create-dirs', '--silent', '--insecure', '--location', '--continue-at',
+                process = subprocess.Popen(
+                    [curl_path, '--create-dirs', '--silent', '--insecure', '--location', '--continue-at',
                      '-', '--output', download_file_path, url])
-                current_size = initial_size
-
                 progress.set_postfix(file=download_file_name)
-                while current_size < download_size:
-                    if is_file(download_file_path):
-                        current_size = get_file_size(download_file_path)
-                        progress.update(current_size - progress.n)
+                if download_size > 0:
+                    while process.poll() is None:
+                        if is_file(download_file_path):
+                            current_size = get_file_size(download_file_path)
+                            progress.update(current_size - progress.n)
+                process.wait()
+                if is_file(download_file_path):
+                    progress.update(get_file_size(download_file_path) - progress.n)
 
 
 @lru_cache(maxsize=None)
@@ -141,16 +151,26 @@ def is_download_done(url: str, file_path: str) -> bool:
     return False
 
 
+def _should_manage_process_state() -> bool:
+    """Only toggle checking/pending when idle; never during an active video job."""
+    return not process_manager.is_processing() and not process_manager.is_stopping()
+
+
 def conditional_download_hashes(download_directory_path: str, hashes: DownloadSet) -> bool:
     hash_paths = [hashes.get(hash_key).get('path') for hash_key in hashes.keys()]
-    process_manager.check()
+    managed = _should_manage_process_state()
+    if managed:
+        process_manager.check()
     if not state_manager.get_item('skip_download'):
         _, invalid_hash_paths = validate_hash_paths(hash_paths)
         if invalid_hash_paths:
             for index in hashes:
-                if hashes.get(index).get('path') in invalid_hash_paths:
-                    invalid_hash_url = hashes.get(index).get('url')
-                    conditional_download(download_directory_path, [invalid_hash_url])
+                entry = hashes.get(index)
+                if entry.get('path') in invalid_hash_paths:
+                    invalid_hash_url = entry.get('url')
+                    if invalid_hash_url:
+                        target_dir = os.path.dirname(entry.get('path')) or download_directory_path
+                        conditional_download(target_dir, [invalid_hash_url])
     valid_hash_paths, invalid_hash_paths = validate_hash_paths(hash_paths)
     for valid_hash_path in valid_hash_paths:
         valid_hash_file_name, _ = os.path.splitext(os.path.basename(valid_hash_path))
@@ -158,21 +178,26 @@ def conditional_download_hashes(download_directory_path: str, hashes: DownloadSe
         invalid_hash_file_name, _ = os.path.splitext(os.path.basename(invalid_hash_path))
         print(f"Invalid hash path: {invalid_hash_path}")
         logger.error(wording.get('validating_hash_failed').format(hash_file_name=invalid_hash_file_name), __name__)
-    if not invalid_hash_paths:
+    if not invalid_hash_paths and managed:
         process_manager.end()
     return not invalid_hash_paths
 
 
 def conditional_download_sources(download_directory_path: str, sources: DownloadSet) -> bool:
     source_paths = [sources.get(source_key).get('path') for source_key in sources.keys()]
-    process_manager.check()
+    managed = _should_manage_process_state()
+    if managed:
+        process_manager.check()
     if not state_manager.get_item('skip_download'):
         _, invalid_source_paths = validate_source_paths(source_paths)
         if invalid_source_paths:
             for index in sources:
-                if sources.get(index).get('path') in invalid_source_paths:
-                    invalid_source_url = sources.get(index).get('url')
-                    conditional_download(download_directory_path, [invalid_source_url])
+                entry = sources.get(index)
+                if entry.get('path') in invalid_source_paths:
+                    invalid_source_url = entry.get('url')
+                    if invalid_source_url:
+                        target_dir = os.path.dirname(entry.get('path')) or download_directory_path
+                        conditional_download(target_dir, [invalid_source_url])
     valid_source_paths, invalid_source_paths = validate_source_paths(source_paths)
     for valid_source_path in valid_source_paths:
         valid_source_file_name, _ = os.path.splitext(os.path.basename(valid_source_path))
@@ -184,7 +209,7 @@ def conditional_download_sources(download_directory_path: str, sources: Download
         if remove_file(invalid_source_path):
             logger.error(wording.get('deleting_corrupt_source').format(source_file_name=invalid_source_file_name),
                          __name__)
-    if not invalid_source_paths:
+    if not invalid_source_paths and managed:
         process_manager.end()
     return not invalid_source_paths
 

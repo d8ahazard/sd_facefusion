@@ -1,8 +1,22 @@
 import os.path
 import time
+from typing import Optional
 
 from facefusion import state_manager
+from facefusion.normalizer import normalize_fps
 from facefusion.vision import count_video_frame_total, detect_video_fps
+
+
+def _resolve_output_video_fps(target_path: str, original_fps: Optional[float] = None) -> float:
+    """Output FPS for progress estimates; falls back to source FPS then 25."""
+    if original_fps is None:
+        original_fps = detect_video_fps(target_path)
+    output_fps = normalize_fps(state_manager.get_item('output_video_fps'))
+    if output_fps:
+        return output_fps
+    if original_fps:
+        return float(original_fps)
+    return 25.0
 
 
 class FFStatus:
@@ -28,6 +42,7 @@ class FFStatus:
             self.preview_image = None
             self.output_image_path = None
             self.output_video_path = None
+            self.textinfo = ''
             # Mark as initialized to prevent reinitialization, unless explicitly requested
             FFStatus._is_initialized = True
 
@@ -37,6 +52,7 @@ class FFStatus:
         self.queue_total = 1
         self.queue_current = 0
         self.preview_image = None
+        self.textinfo = ''
         self.status = status
         self.started = True
         self.time_start = time.time()
@@ -131,8 +147,8 @@ class FFStatus:
         trim_frame_end = state_manager.get_item('trim_frame_end')
         from facefusion.filesystem import is_video, is_image
         if is_video(target_path):
-            original_fps = detect_video_fps(target_path)
-            fps = state_manager.get_item('output_video_fps')
+            original_fps = detect_video_fps(target_path) or 25.0
+            fps = _resolve_output_video_fps(target_path, original_fps)
             video_frame_total = count_video_frame_total(target_path)
             if trim_frame_start is not None:
                 video_frame_total -= trim_frame_start
@@ -149,6 +165,24 @@ class FFStatus:
         else:
             total_steps = 0
         return int(total_steps)
+
+
+def preview_frame_stride() -> int:
+    """Frames between live preview updates (~preview_update_seconds of footage)."""
+    from facefusion.filesystem import is_video
+    target_path = state_manager.get_item('target_path')
+    seconds = state_manager.get_item('preview_update_seconds')
+    if seconds is None:
+        seconds = 2.0
+    try:
+        seconds = float(seconds)
+    except (TypeError, ValueError):
+        seconds = 2.0
+    seconds = max(0.5, seconds)
+    fps = 25.0
+    if is_video(target_path):
+        fps = _resolve_output_video_fps(target_path)
+    return max(1, int(fps * seconds))
 
 
 def update_status(message: str, scope: str = 'FACEFUSION.CORE') -> None:
